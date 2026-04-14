@@ -1,85 +1,116 @@
-import { useEffect, useState, useRef } from 'react';
-import { APIProvider, Map, AdvancedMarker } from '@vis.gl/react-google-maps';
+import { useEffect, useState } from 'react';
+import { Navbar } from './components/Navbar';
+import { PostComposer } from './components/PostComposer';
+import { PostCard } from './components/PostCard';
+import { MapPanel } from './components/MapPanel';
+import { API_BASE } from './config';
+import type { Post } from './types';
+import './App.css';
 
-interface Post {
-  id: number;
-  content: string;
-  user_id: number;
-  image_url?: string;
-}
-
-function App() {
+export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [content, setContent] = useState('');
-  const [locId, setLocId] = useState(2);
-  const [file, setFile] = useState<File | null>(null);
+  const [feedLocId, setFeedLocId] = useState(2);
+  const [loading, setLoading] = useState(false);
 
   const fetchPosts = async (id: number) => {
+    setLoading(true);
     try {
-      const res = await fetch(`http://localhost:9000/search/?location_id=${id}`);
+      const res = await fetch(`${API_BASE}/search/?location_id=${id}`);
       const data = await res.json();
-      setPosts(data.posts || []);
-    } catch (err) { console.error('Fetch error:', err); }
+      setPosts(data.posts ?? []);
+    } catch (err) {
+      console.error('Failed to fetch posts:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const createPost = async () => {
-    if (!content.trim()) return;
-    
-    let imageUrl = '';
-    if (file) {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("http://localhost:9000/upload/", { method: "POST", body: formData });
+  const handlePost = async (content: string, files: File[], locationId: number) => {
+    let media: { url: string; media_type: string }[] = [];
+
+    if (files.length > 0) {
+      const form = new FormData();
+      files.forEach((f) => form.append('files', f));
+      const res = await fetch(`${API_BASE}/upload/`, { method: 'POST', body: form });
       const data = await res.json();
-      imageUrl = data.url;
+      media = data.media;
     }
 
-    await fetch(`http://localhost:9000/posts/?user_id=1&content=${encodeURIComponent(content)}&location_id=${locId}&image_url=${encodeURIComponent(imageUrl)}`, { method: 'POST' });
-    setContent('');
-    setFile(null);
-    fetchPosts(locId);
+    await fetch(`${API_BASE}/posts/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: 1, content, location_id: locationId, media }),
+    });
+
+    // If the post was tagged to a different location than the feed, switch feed to that location
+    if (locationId !== feedLocId) setFeedLocId(locationId);
+    else fetchPosts(feedLocId);
   };
 
-  useEffect(() => { fetchPosts(locId); }, [locId]);
+  const handleEdit = async (
+    postId: number,
+    changes: { content: string; locationId: number | null; locationName: string | null }
+  ) => {
+    // Optimistic update
+    setPosts((prev) => prev.map((p) => {
+      if (p.id !== postId) return p;
+      return {
+        ...p,
+        content: changes.content,
+        ...(changes.locationId !== null ? { location_name: changes.locationName } : {}),
+      };
+    }));
+
+    const body: Record<string, unknown> = { content: changes.content };
+    if (changes.locationId !== null) body.location_id = changes.locationId;
+
+    try {
+      await fetch(`${API_BASE}/posts/${postId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      console.error('Edit failed:', err);
+      fetchPosts(feedLocId);
+    }
+  };
+
+  const handleDelete = async (postId: number) => {
+    // Optimistic update
+    setPosts((prev) => prev.filter((p) => p.id !== postId));
+    try {
+      await fetch(`${API_BASE}/posts/${postId}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Delete failed:', err);
+      fetchPosts(feedLocId); // rollback
+    }
+  };
+
+  useEffect(() => { fetchPosts(feedLocId); }, [feedLocId]);
 
   return (
-    <div style={{ backgroundColor: '#f7f7f7', minHeight: '100vh', paddingBottom: '50px' }}>
-      <nav style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'white', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-        <h1 style={{ fontSize: '1.5rem', color: '#ff2442', margin: 0 }}>Discovery</h1>
-        <input type="number" value={locId} onChange={(e) => setLocId(Number(e.target.value))} style={{ width: '40px' }} />
-      </nav>
-      
-      {/* Google Map Section */}
-      <div style={{ height: '300px', margin: '20px auto', maxWidth: '900px', borderRadius: '20px', overflow: 'hidden' }}>
-        <APIProvider apiKey={"YOUR_GOOGLE_MAPS_API_KEY"}>
-          <Map defaultCenter={{lat: 37.7749, lng: -122.4194}} defaultZoom={12} mapId={"DEMO_MAP_ID"}>
-            <AdvancedMarker position={{lat: 37.7749, lng: -122.4194}} />
-          </Map>
-        </APIProvider>
-      </div>
-
-      <div style={{ maxWidth: '600px', margin: '20px auto', padding: '0 20px' }}>
-        <div style={{ background: 'white', padding: '20px', borderRadius: '20px' }}>
-          <textarea value={content} onChange={(e) => setContent(e.target.value)} style={{ width: '100%', height: '70px' }} placeholder="무엇을 발견했나요?" />
-          <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          <button onClick={createPost}>게시하기</button>
-        </div>
-      </div>
-
-      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '0 15px' }}>
-        <div style={{ columnCount: 2, columnGap: '15px' }}>
-          {posts.map((post) => (
-            <div key={post.id} style={{ breakInside: 'avoid', marginBottom: '15px', background: 'white', borderRadius: '20px', overflow: 'hidden' }}>
-              {post.image_url && <img src={post.image_url} alt="Post" style={{ width: '100%', display: 'block' }} />}
-              <div style={{ padding: '15px' }}>
-                <p>{post.content}</p>
-              </div>
+    <>
+      <Navbar />
+      <div className="layout">
+        <main className="feed">
+          <PostComposer fallbackLocationId={feedLocId} onSubmit={handlePost} />
+          {loading ? (
+            <p className="feed__state">불러오는 중…</p>
+          ) : posts.length === 0 ? (
+            <p className="feed__state">아직 게시물이 없습니다.</p>
+          ) : (
+            <div className="feed-grid">
+              {posts.map((post) => (
+                <PostCard key={post.id} post={post} onDelete={handleDelete} onEdit={handleEdit} />
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </main>
+        <aside className="sidebar">
+          <MapPanel locId={feedLocId} onLocChange={setFeedLocId} />
+        </aside>
       </div>
-    </div>
+    </>
   );
 }
-
-export default App;

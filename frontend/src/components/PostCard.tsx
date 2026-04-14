@@ -14,17 +14,20 @@ interface EditChanges {
 
 interface Props {
   post: Post;
+  currentUserId: number | null;
   onDelete: (id: number) => void;
   onEdit: (id: number, changes: EditChanges) => Promise<void>;
 }
 
-export function PostCard({ post, onDelete, onEdit }: Props) {
+export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
   const [editLocation, setEditLocation] = useState<SelectedLocation | null>(null);
   const [saving, setSaving] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
+
+  const isOwner = currentUserId !== null && currentUserId === post.user_id;
 
   useEffect(() => { setEditContent(post.content); }, [post.content]);
 
@@ -83,27 +86,30 @@ export function PostCard({ post, onDelete, onEdit }: Props) {
           <button className="action-btn" aria-label="좋아요"><HeartIcon /></button>
           <button className="action-btn" aria-label="댓글"><CommentIcon /></button>
           <div className="post-card__actions-right">
-            {confirmDelete ? (
-              <div className="post-card__delete-confirm">
-                <span>삭제할까요?</span>
-                <button className="post-card__confirm-yes" onClick={() => onDelete(post.id)}>삭제</button>
-                <button className="post-card__confirm-no" onClick={() => setConfirmDelete(false)}>취소</button>
-              </div>
-            ) : (
-              <>
-                <button className="action-btn" aria-label="저장"><BookmarkIcon /></button>
-                <button
-                  className="action-btn"
-                  aria-label="편집"
-                  onClick={() => { setEditing(true); setConfirmDelete(false); }}
-                ><PencilIcon /></button>
-                <button
-                  className="action-btn action-btn--danger"
-                  aria-label="삭제"
-                  onClick={() => { setConfirmDelete(true); setEditing(false); }}
-                ><TrashIcon /></button>
-              </>
+            {isOwner && (
+              confirmDelete ? (
+                <div className="post-card__delete-confirm">
+                  <span>삭제할까요?</span>
+                  <button className="post-card__confirm-yes" onClick={() => onDelete(post.id)}>삭제</button>
+                  <button className="post-card__confirm-no" onClick={() => setConfirmDelete(false)}>취소</button>
+                </div>
+              ) : (
+                <>
+                  <button className="action-btn" aria-label="저장"><BookmarkIcon /></button>
+                  <button
+                    className="action-btn"
+                    aria-label="편집"
+                    onClick={() => { setEditing(true); setConfirmDelete(false); }}
+                  ><PencilIcon /></button>
+                  <button
+                    className="action-btn action-btn--danger"
+                    aria-label="삭제"
+                    onClick={() => { setConfirmDelete(true); setEditing(false); }}
+                  ><TrashIcon /></button>
+                </>
+              )
             )}
+            {!isOwner && <button className="action-btn" aria-label="저장"><BookmarkIcon /></button>}
           </div>
         </div>
 
@@ -137,7 +143,9 @@ export function PostCard({ post, onDelete, onEdit }: Props) {
         ) : (
           post.content && (
             <p className="post-card__content">
-              <strong style={{ color: avatarColor(post.user_id) }}>user_{post.user_id}</strong>
+              <strong style={{ color: avatarColor(post.user_id) }}>
+                {post.username ?? `user_${post.user_id}`}
+              </strong>
               {' '}{post.content}
             </p>
           )

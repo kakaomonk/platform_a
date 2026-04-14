@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import uuid4
 
 import requests as http_requests
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload, joinedload
 
 from database import get_db
 from models import Post, PostMedia, Location, User  # noqa: F401
+from auth import hash_password, verify_password, create_token, get_optional_user, require_user
 
 app = FastAPI()
 
@@ -31,6 +32,57 @@ app.add_middleware(
 )
 
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+class RegisterIn(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+
+    if len(username) < 2:
+        raise HTTPException(status_code=422, detail="Username must be at least 2 characters")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+
+    existing = await db.execute(
+        select(User).where(
+            (func.lower(User.username) == username.lower()) |
+            (func.lower(User.email) == email)
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(status_code=409, detail="Username or email already taken")
+
+    user = User(username=username, email=email, password_hash=hash_password(payload.password))
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return {"token": create_token(user.id, user.username), "user_id": user.id, "username": user.username}
+
+
+@app.post("/auth/login")
+async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User).where(func.lower(User.username) == payload.username.strip().lower())
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다")
+    return {"token": create_token(user.id, user.username), "user_id": user.id, "username": user.username}
 
 
 # ── Upload ────────────────────────────────────────────────────────────────────
@@ -52,11 +104,10 @@ async def upload_media(files: List[UploadFile] = File(...)):
 # ── Location ──────────────────────────────────────────────────────────────────
 
 def _nominatim_search_cities(q: str) -> list:
-    """Nominatim structured city search — free, no API key, returns only city-level results."""
     resp = http_requests.get(
         "https://nominatim.openstreetmap.org/search",
         params={
-            "city": q,          # structured param → city-level only
+            "city": q,
             "format": "json",
             "addressdetails": 1,
             "limit": 6,
@@ -98,7 +149,6 @@ async def search_location(q: str):
         seen, results = set(), []
         for item in items:
             addr = item.get("address", {})
-            # Nominatim city classification varies by country; item["name"] is most reliable
             name = (
                 item.get("name")
                 or addr.get("city") or addr.get("town")
@@ -164,7 +214,6 @@ class MediaItemIn(BaseModel):
 
 
 class PostCreate(BaseModel):
-    user_id: int = 1
     content: str = ""
     location_id: int
     media: List[MediaItemIn] = []
@@ -175,9 +224,13 @@ class PostUpdate(BaseModel):
     location_id: Optional[int] = None
 
 
-@app.post("/posts/")
-async def create_post(payload: PostCreate, db: AsyncSession = Depends(get_db)):
-    post = Post(user_id=payload.user_id, content=payload.content, location_id=payload.location_id)
+@app.post("/posts/", status_code=status.HTTP_201_CREATED)
+async def create_post(
+    payload: PostCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    post = Post(user_id=current_user.id, content=payload.content, location_id=payload.location_id)
     db.add(post)
     await db.flush()
     for i, item in enumerate(payload.media):
@@ -187,11 +240,18 @@ async def create_post(payload: PostCreate, db: AsyncSession = Depends(get_db)):
 
 
 @app.patch("/posts/{post_id}")
-async def update_post(post_id: int, payload: PostUpdate, db: AsyncSession = Depends(get_db)):
+async def update_post(
+    post_id: int,
+    payload: PostUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     result = await db.execute(select(Post).where(Post.id == post_id))
     post = result.scalar_one_or_none()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    if post.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     if payload.content is not None:
         post.content = payload.content
@@ -210,11 +270,17 @@ async def update_post(post_id: int, payload: PostUpdate, db: AsyncSession = Depe
 
 
 @app.delete("/posts/{post_id}")
-async def delete_post(post_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_post(
+    post_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     result = await db.execute(select(Post).where(Post.id == post_id))
     post = result.scalar_one_or_none()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    if post.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
     await db.delete(post)
     await db.commit()
     return {"status": "success"}
@@ -225,7 +291,11 @@ async def search_posts(location_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Post)
         .where(Post.location_id == location_id)
-        .options(selectinload(Post.media), joinedload(Post.location))
+        .options(
+            selectinload(Post.media),
+            joinedload(Post.location),
+            joinedload(Post.user),
+        )
         .order_by(Post.created_at.desc())
     )
     posts = result.scalars().unique().all()
@@ -238,6 +308,7 @@ async def search_posts(location_id: int, db: AsyncSession = Depends(get_db)):
             "id": p.id,
             "content": p.content,
             "user_id": p.user_id,
+            "username": p.user.username if p.user else f"user_{p.user_id}",
             "location_name": p.location.name if p.location else None,
             "media": media,
         }

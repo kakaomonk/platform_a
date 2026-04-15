@@ -9,6 +9,8 @@ export interface Post {
   user_id: number;
   username: string;
   location_name?: string | null;
+  location_id?: number;
+  distance_km?: number | null;
   media: MediaItem[];
 }
 

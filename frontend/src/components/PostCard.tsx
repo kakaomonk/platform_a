@@ -4,6 +4,12 @@ import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
+
+function formatDistance(km: number): string {
+  if (km < 1) return `${Math.round(km * 1000)}m`;
+  if (km < 10) return `${km.toFixed(1)}km`;
+  return `${Math.round(km).toLocaleString()}km`;
+}
 const avatarColor = (id: number) => AVATAR_PALETTE[id % AVATAR_PALETTE.length];
 
 interface EditChanges {
@@ -76,9 +82,15 @@ export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
     <article className="post-card">
       <Carousel media={post.media} />
       <div className="post-card__body">
-        {post.location_name && !editing && (
+        {(post.location_name || post.distance_km != null) && !editing && (
           <div className="post-card__location">
-            <PinIcon /><span>{post.location_name}</span>
+            <PinIcon />
+            <span>
+              {post.location_name}
+              {post.distance_km != null && (
+                <span className="post-card__distance"> · {formatDistance(post.distance_km)}</span>
+              )}
+            </span>
           </div>
         )}
 

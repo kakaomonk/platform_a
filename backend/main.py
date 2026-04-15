@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import shutil
 from typing import List, Optional
@@ -15,7 +16,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 
 from database import get_db
-from models import Post, PostMedia, Location, User  # noqa: F401
+from models import Post, PostMedia, Location, User, SearchHistory  # noqa: F401
 from auth import hash_password, verify_password, create_token, get_optional_user, require_user
 
 app = FastAPI()
@@ -32,6 +33,24 @@ app.add_middleware(
 )
 
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
+
+
+def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlng / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _parse_coords(coord_str: str):
+    try:
+        parts = coord_str.split(",")
+        return float(parts[0].strip()), float(parts[1].strip())
+    except (ValueError, IndexError, AttributeError):
+        return None
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -314,3 +333,93 @@ async def search_posts(location_id: int, db: AsyncSession = Depends(get_db)):
         }
 
     return {"location_id": location_id, "posts": [serialize(p) for p in posts]}
+
+
+# ── Proximity Feed ───────────────────────────────────────────────────────────
+
+@app.get("/feed/")
+async def proximity_feed(
+    lat: float,
+    lng: float,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    result = await db.execute(
+        select(Post)
+        .options(selectinload(Post.media), joinedload(Post.location), joinedload(Post.user))
+    )
+    posts = result.scalars().unique().all()
+
+    recent_loc_ids: list[int] = []
+    if current_user:
+        hist = await db.execute(
+            select(SearchHistory.location_id)
+            .where(SearchHistory.user_id == current_user.id)
+            .order_by(SearchHistory.searched_at.desc())
+            .limit(50)
+        )
+        seen: set[int] = set()
+        for (loc_id,) in hist.all():
+            if loc_id not in seen:
+                recent_loc_ids.append(loc_id)
+                seen.add(loc_id)
+
+    max_rank = len(recent_loc_ids)
+
+    def sort_key(p: Post):
+        dist = float("inf")
+        if p.location and p.location.coordinates:
+            coords = _parse_coords(p.location.coordinates)
+            if coords:
+                dist = _haversine(lat, lng, coords[0], coords[1])
+        search_rank = max_rank
+        if p.location_id and p.location_id in recent_loc_ids:
+            search_rank = recent_loc_ids.index(p.location_id)
+        return (dist, search_rank, -(p.id or 0))
+
+    posts_sorted = sorted(posts, key=sort_key)
+
+    def serialize(p: Post) -> dict:
+        media = [{"url": m.media_url, "media_type": m.media_type} for m in p.media]
+        if not media and p.image_url:
+            media = [{"url": p.image_url, "media_type": "image"}]
+        dist_km = None
+        if p.location and p.location.coordinates:
+            coords = _parse_coords(p.location.coordinates)
+            if coords:
+                dist_km = round(_haversine(lat, lng, coords[0], coords[1]), 1)
+        return {
+            "id": p.id,
+            "content": p.content,
+            "user_id": p.user_id,
+            "username": p.user.username if p.user else f"user_{p.user_id}",
+            "location_name": p.location.name if p.location else None,
+            "location_id": p.location_id,
+            "distance_km": dist_km,
+            "media": media,
+        }
+
+    return {"posts": [serialize(p) for p in posts_sorted]}
+
+
+# ── Search History ───────────────────────────────────────────────────────────
+
+class SearchHistoryIn(BaseModel):
+    location_id: int
+    query_text: str = ""
+
+
+@app.post("/search-history/")
+async def record_search_history(
+    payload: SearchHistoryIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    entry = SearchHistory(
+        user_id=current_user.id,
+        location_id=payload.location_id,
+        query_text=payload.query_text,
+    )
+    db.add(entry)
+    await db.commit()
+    return {"status": "ok"}

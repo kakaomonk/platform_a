@@ -53,3 +53,15 @@ class PostMedia(Base):
     order = Column(Integer, default=0)
 
     post = relationship("Post", back_populates="media")
+
+
+class SearchHistory(Base):
+    __tablename__ = "search_history"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    query_text = Column(String(255), nullable=True)
+    searched_at = Column(DateTime, server_default=func.now())
+
+    user = relationship("User")
+    location = relationship("Location")

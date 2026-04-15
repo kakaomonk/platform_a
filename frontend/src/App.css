@@ -318,6 +318,24 @@
   justify-content: space-between;
   border-top: 1px solid var(--border);
 }
+.map-panel__footer-v2 {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}
+.map-panel__geo-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.map-panel__geo-status svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
 .map-panel__loc {
   display: flex;
   align-items: center;
@@ -452,6 +470,10 @@
   font-weight: 500;
   color: var(--text-muted);
   padding: 8px 0 0;
+}
+.post-card__distance {
+  font-weight: 400;
+  opacity: 0.8;
 }
 
 /* ─── Post Card — Delete ─────────────────────────────────── */

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload, contains_eager
@@ -278,22 +278,35 @@ async def update_post(
     if post.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    if payload.content is not None:
-        post.content = payload.content
-    if payload.location_id is not None:
-        post.location_id = payload.location_id
+    new_category = post.category  # default: unchanged
     if payload.category is not None:
-        post.category = payload.category if payload.category != "" else None
+        new_category = payload.category if payload.category != "" else None
 
+    from sqlalchemy import text as sa_text
+    await db.execute(sa_text("""
+        UPDATE posts SET
+            content   = COALESCE(:content,   content),
+            location_id = COALESCE(:loc_id, location_id),
+            category  = :category
+        WHERE id = :post_id AND user_id = :user_id
+    """), {
+        "content":  payload.content,
+        "loc_id":   payload.location_id,
+        "category": new_category,
+        "post_id":  post_id,
+        "user_id":  current_user.id,
+    })
     await db.commit()
 
-    loc_name = None
-    if post.location_id:
-        loc_result = await db.execute(select(Location).where(Location.id == post.location_id))
-        loc = loc_result.scalar_one_or_none()
-        loc_name = loc.name if loc else None
+    result2 = await db.execute(
+        select(Post).where(Post.id == post_id)
+        .options(joinedload(Post.location))
+        .execution_options(populate_existing=True)
+    )
+    post = result2.scalar_one()
+    loc_name = post.location.name if post.location else None
 
-    return {"status": "success", "content": post.content, "location_name": loc_name}
+    return {"status": "success", "content": post.content, "location_name": loc_name, "category": post.category}
 
 
 @app.delete("/posts/{post_id}")

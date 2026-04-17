@@ -280,11 +280,25 @@ export default function App() {
     if (changes.locationId !== null) body.location_id = changes.locationId;
     body.category = changes.category ?? '';
     try {
-      await fetch(`${API_BASE}/posts/${postId}`, {
+      const res = await fetch(`${API_BASE}/posts/${postId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        console.error('[PATCH /posts] failed:', res.status, await res.text());
+        refreshFeed();
+      } else {
+        const saved = await res.json();
+        console.log('[PATCH /posts] saved:', saved);
+        const confirm = (prev: Post[]) => prev.map((p) => p.id !== postId ? p : {
+          ...p,
+          content: saved.content,
+          ...(saved.location_name != null ? { location_name: saved.location_name } : {}),
+          category: saved.category ?? null,
+        });
+        if (searchQuery) setSearchPosts(confirm); else setPosts(confirm);
+      }
     } catch { refreshFeed(); }
   };
 

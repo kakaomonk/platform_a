@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { APIProvider, Map, AdvancedMarker } from '@vis.gl/react-google-maps';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
@@ -8,15 +7,13 @@ const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '';
 interface Props {
   userCoords: { lat: number; lng: number };
   geoStatus: 'pending' | 'granted' | 'denied';
-  onSearchSelect: (locationId: number) => void;
+  onSearchSelect: (locationId: number, locationName: string, lat: number, lng: number) => void;
+  onLocationClear: () => void;
 }
 
-export function MapPanel({ userCoords, geoStatus, onSearchSelect }: Props) {
-  const [resetKey, setResetKey] = useState(0);
-
+export function MapPanel({ userCoords, geoStatus, onSearchSelect, onLocationClear }: Props) {
   const handleSelect = (loc: SelectedLocation) => {
-    onSearchSelect(loc.id);
-    setResetKey((k) => k + 1);
+    onSearchSelect(loc.id, loc.name, loc.lat, loc.lng);
   };
 
   return (
@@ -47,9 +44,9 @@ export function MapPanel({ userCoords, geoStatus, onSearchSelect }: Props) {
           </span>
         </div>
         <LocationSearchInput
-          key={resetKey}
-          placeholder="위치 검색으로 추천 개선"
+          placeholder="도시를 검색해 포스트 필터링"
           onSelect={handleSelect}
+          onClear={onLocationClear}
         />
       </div>
     </div>

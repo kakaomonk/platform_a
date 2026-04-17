@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, UniqueConstraint, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -31,9 +31,10 @@ class Post(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     content = Column(Text)
-    image_url = Column(String(255), nullable=True)  # legacy — superseded by post_media
+    image_url = Column(String(255), nullable=True)
     location_id = Column(Integer, ForeignKey("locations.id"))
     location_coords = Column(String(50))
+    category = Column(String(50), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User")
@@ -51,7 +52,7 @@ class PostMedia(Base):
     id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     media_url = Column(String(500), nullable=False)
-    media_type = Column(String(10), default="image")  # image | video
+    media_type = Column(String(10), default="image")
     order = Column(Integer, default=0)
 
     post = relationship("Post", back_populates="media")
@@ -105,3 +106,30 @@ class Follow(Base):
 
     follower = relationship("User", foreign_keys=[follower_id])
     following = relationship("User", foreign_keys=[following_id])
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    id = Column(Integer, primary_key=True, index=True)
+    user1_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user2_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (UniqueConstraint("user1_id", "user2_id", name="uq_conversation"),)
+
+    user1 = relationship("User", foreign_keys=[user1_id])
+    user2 = relationship("User", foreign_keys=[user2_id])
+    messages = relationship("DirectMessage", back_populates="conversation", cascade="all, delete-orphan")
+
+
+class DirectMessage(Base):
+    __tablename__ = "direct_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    conversation = relationship("Conversation", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])

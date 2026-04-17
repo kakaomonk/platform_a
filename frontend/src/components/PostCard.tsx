@@ -4,6 +4,7 @@ import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
 import { API_BASE } from '../config';
 import { useAuth } from '../AuthContext';
+import { CATEGORIES } from '../categories';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
 
@@ -26,10 +27,25 @@ function timeAgo(dateStr: string | null): string {
   return `${days}일 전`;
 }
 
+function renderMentions(text: string) {
+  const parts = text.split(/(@\w+)/g);
+  return parts.map((part, i) => {
+    if (/^@\w+$/.test(part)) {
+      return (
+        <span key={i} className="mention" onClick={() => { /* open profile by username — future */ }}>
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
+}
+
 interface EditChanges {
   content: string;
   locationId: number | null;
   locationName: string | null;
+  category: string | null;
 }
 
 interface Props {
@@ -46,15 +62,15 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
   const [editLocation, setEditLocation] = useState<SelectedLocation | null>(null);
+  const [editCategory, setEditCategory] = useState<string | null>(post.category ?? null);
+  const [showEditCategories, setShowEditCategories] = useState(false);
   const [saving, setSaving] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
 
-  // Like state
   const [liked, setLiked] = useState(post.is_liked);
   const [likeCount, setLikeCount] = useState(post.like_count);
   const [likeLoading, setLikeLoading] = useState(false);
 
-  // Comment state
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState('');
@@ -66,6 +82,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
   useEffect(() => { setEditContent(post.content); }, [post.content]);
   useEffect(() => { setLiked(post.is_liked); setLikeCount(post.like_count); }, [post.is_liked, post.like_count]);
   useEffect(() => { setCommentCount(post.comment_count); }, [post.comment_count]);
+  useEffect(() => { setEditCategory(post.category ?? null); }, [post.category]);
 
   useEffect(() => {
     if (editing && editRef.current) {
@@ -75,7 +92,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
       el.style.height = `${el.scrollHeight}px`;
       el.selectionStart = el.selectionEnd = el.value.length;
     }
-    if (!editing) setEditLocation(null);
+    if (!editing) { setEditLocation(null); setShowEditCategories(false); }
   }, [editing]);
 
   const autoResizeEdit = () => {
@@ -90,6 +107,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
         content: editContent.trim(),
         locationId: editLocation?.id ?? null,
         locationName: editLocation?.name ?? null,
+        category: editCategory,
       });
       setEditing(false);
     } finally {
@@ -106,9 +124,9 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     setEditing(false);
     setEditContent(post.content);
     setEditLocation(null);
+    setEditCategory(post.category ?? null);
   };
 
-  // ── Like ──
   const toggleLike = async () => {
     if (!user || likeLoading) return;
     setLikeLoading(true);
@@ -127,7 +145,6 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     finally { setLikeLoading(false); }
   };
 
-  // ── Comments ──
   const loadComments = async () => {
     try {
       const res = await fetch(`${API_BASE}/posts/${post.id}/comments`);
@@ -148,10 +165,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     try {
       const res = await fetch(`${API_BASE}/posts/${post.id}/comments`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${user.token}`,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
         body: JSON.stringify({ content: commentText.trim() }),
       });
       if (res.ok) {
@@ -178,11 +192,10 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
   };
 
   const handleCommentKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submitComment();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment(); }
   };
+
+  const catInfo = CATEGORIES.find((c) => c.id === post.category);
 
   return (
     <article className="post-card">
@@ -197,6 +210,15 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                 <span className="post-card__distance"> · {formatDistance(post.distance_km)}</span>
               )}
             </span>
+            {catInfo && (
+              <span className="post-card__cat-tag">{catInfo.emoji} {catInfo.label}</span>
+            )}
+          </div>
+        )}
+
+        {catInfo && !post.location_name && !editing && (
+          <div className="post-card__location">
+            <span className="post-card__cat-tag">{catInfo.emoji} {catInfo.label}</span>
           </div>
         )}
 
@@ -259,6 +281,34 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               onSelect={setEditLocation}
               onClear={() => setEditLocation(null)}
             />
+            <div className="post-card__edit-cat-row">
+              <button
+                className={`post-card__edit-cat-toggle${showEditCategories ? ' active' : ''}`}
+                onClick={() => setShowEditCategories((v) => !v)}
+              >
+                <TagIcon />
+                {editCategory
+                  ? `${CATEGORIES.find((c) => c.id === editCategory)?.emoji ?? ''} ${CATEGORIES.find((c) => c.id === editCategory)?.label ?? ''}`
+                  : '카테고리'}
+              </button>
+              {editCategory && (
+                <button className="post-card__edit-cat-clear" onClick={() => setEditCategory(null)}>×</button>
+              )}
+            </div>
+            {showEditCategories && (
+              <div className="composer__cat-grid">
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c.id}
+                    className={`composer__cat-chip${editCategory === c.id ? ' composer__cat-chip--active' : ''}`}
+                    onClick={() => setEditCategory(editCategory === c.id ? null : c.id)}
+                  >
+                    <span>{c.emoji}</span>
+                    <span>{c.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="post-card__edit-footer">
               <span className="post-card__edit-hint">⌘Enter 저장 · Esc 취소</span>
               <div className="post-card__edit-btns">
@@ -278,12 +328,11 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               >
                 {post.username ?? `user_${post.user_id}`}
               </strong>
-              {' '}{post.content}
+              {' '}{renderMentions(post.content)}
             </p>
           )
         )}
 
-        {/* Comment section */}
         {showComments && (
           <div className="post-card__comments">
             {comments.map((c) => (
@@ -295,7 +344,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                   >
                     {c.username}
                   </strong>
-                  {' '}{c.content}
+                  {' '}{renderMentions(c.content)}
                   <span className="post-card__comment-time">{timeAgo(c.created_at)}</span>
                 </div>
                 {currentUserId === c.user_id && (
@@ -374,6 +423,9 @@ function Carousel({ media }: { media: MediaItem[] }) {
 
 function PinIcon() {
   return <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" /></svg>;
+}
+function TagIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><line x1="7" y1="7" x2="7.01" y2="7" /></svg>;
 }
 function HeartIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;

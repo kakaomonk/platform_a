@@ -11,6 +11,8 @@ interface Suggestion {
 export interface SelectedLocation {
   id: number;
   name: string;
+  lat: number;
+  lng: number;
 }
 
 interface Props {
@@ -75,7 +77,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
         body: JSON.stringify({ name: s.name, lat: s.lat, lng: s.lng }),
       });
       const data = await res.json();
-      const loc: SelectedLocation = { id: data.location_id, name: data.name };
+      const loc: SelectedLocation = { id: data.location_id, name: data.name, lat: data.lat, lng: data.lng };
       setSelected(loc);
       setQuery(data.name);
       onSelect(loc);
@@ -106,7 +108,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
             `${API_BASE}/location/reverse-geocode/?lat=${coords.latitude}&lng=${coords.longitude}`
           );
           const data = await res.json();
-          const loc: SelectedLocation = { id: data.location_id, name: data.name };
+          const loc: SelectedLocation = { id: data.location_id, name: data.name, lat: data.lat, lng: data.lng };
           setSelected(loc);
           setQuery(data.name);
           onSelect(loc);

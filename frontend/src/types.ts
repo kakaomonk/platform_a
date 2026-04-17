@@ -12,6 +12,7 @@ export interface Post {
   location_name?: string | null;
   location_id?: number;
   distance_km?: number | null;
+  category?: string | null;
   media: MediaItem[];
   like_count: number;
   comment_count: number;

@@ -22,6 +22,7 @@ export function ProfileModal({ userId, onClose }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const isMe = user?.id === userId;
+  const [followLoading, setFollowLoading] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -31,12 +32,34 @@ export function ProfileModal({ userId, onClose }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${API_BASE}/users/${userId}`)
+    const headers: Record<string, string> = user ? { Authorization: `Bearer ${user.token}` } : {};
+    fetch(`${API_BASE}/users/${userId}`, { headers })
       .then((r) => r.json())
       .then((data) => { setProfile(data); setBioText(data.bio ?? ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [userId]);
+  }, [userId, user]);
+
+  const toggleFollow = async () => {
+    if (!user || !profile || followLoading) return;
+    setFollowLoading(true);
+    const method = profile.is_following ? 'DELETE' : 'POST';
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/follow`, {
+        method,
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile({
+          ...profile,
+          is_following: !profile.is_following,
+          follower_count: data.follower_count,
+        });
+      }
+    } catch { /* ignore */ }
+    finally { setFollowLoading(false); }
+  };
 
   const saveBio = async () => {
     if (!user || !profile) return;
@@ -111,9 +134,22 @@ export function ProfileModal({ userId, onClose }: Props) {
                 )}
               </div>
               <div className="profile-modal__info">
-                <h2 className="profile-modal__username">@{profile.username}</h2>
+                <div className="profile-modal__username-row">
+                  <h2 className="profile-modal__username">@{profile.username}</h2>
+                  {!isMe && user && (
+                    <button
+                      className={`profile-modal__follow-btn${profile.is_following ? ' profile-modal__follow-btn--following' : ''}`}
+                      onClick={toggleFollow}
+                      disabled={followLoading}
+                    >
+                      {profile.is_following ? '팔로잉' : '팔로우'}
+                    </button>
+                  )}
+                </div>
                 <div className="profile-modal__stats">
                   <span>게시물 <strong>{profile.post_count}</strong></span>
+                  <span>팔로워 <strong>{profile.follower_count}</strong></span>
+                  <span>팔로잉 <strong>{profile.following_count}</strong></span>
                 </div>
               </div>
             </div>

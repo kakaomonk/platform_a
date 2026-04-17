@@ -16,7 +16,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload
 
 from database import get_db
-from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment  # noqa: F401
+from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment, Follow  # noqa: F401
 from auth import hash_password, verify_password, create_token, get_optional_user, require_user
 
 app = FastAPI()
@@ -583,18 +583,33 @@ async def delete_comment(
 # ── User Profile ─────────────────────────────────────────────────────────────
 
 @app.get("/users/{user_id}")
-async def get_user_profile(user_id: int, db: AsyncSession = Depends(get_db)):
+async def get_user_profile(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     post_count = await db.execute(select(func.count(Post.id)).where(Post.user_id == user_id))
+    follower_count = await db.execute(select(func.count(Follow.id)).where(Follow.following_id == user_id))
+    following_count = await db.execute(select(func.count(Follow.id)).where(Follow.follower_id == user_id))
+    is_following = False
+    if current_user and current_user.id != user_id:
+        chk = await db.execute(
+            select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
+        )
+        is_following = chk.scalar_one_or_none() is not None
     return {
         "id": user.id,
         "username": user.username,
         "avatar_url": user.avatar_url,
         "bio": user.bio,
         "post_count": post_count.scalar(),
+        "follower_count": follower_count.scalar(),
+        "following_count": following_count.scalar(),
+        "is_following": is_following,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -644,6 +659,106 @@ async def upload_avatar(
     current_user.avatar_url = f"http://localhost:9000/{dest}"
     await db.commit()
     return {"avatar_url": current_user.avatar_url}
+
+
+# ── Follow ───────────────────────────────────────────────────────────────────
+
+@app.post("/users/{user_id}/follow", status_code=status.HTTP_201_CREATED)
+async def follow_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="자기 자신을 팔로우할 수 없습니다")
+    target = await db.execute(select(User).where(User.id == user_id))
+    if not target.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = await db.execute(
+        select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Already following")
+    db.add(Follow(follower_id=current_user.id, following_id=user_id))
+    await db.commit()
+    count = await db.execute(select(func.count(Follow.id)).where(Follow.following_id == user_id))
+    return {"status": "following", "follower_count": count.scalar()}
+
+
+@app.delete("/users/{user_id}/follow")
+async def unfollow_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    result = await db.execute(
+        select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
+    )
+    follow = result.scalar_one_or_none()
+    if not follow:
+        raise HTTPException(status_code=404, detail="Not following")
+    await db.delete(follow)
+    await db.commit()
+    count = await db.execute(select(func.count(Follow.id)).where(Follow.following_id == user_id))
+    return {"status": "unfollowed", "follower_count": count.scalar()}
+
+
+@app.get("/feed/following")
+async def following_feed(
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    limit = min(limit, 50)
+    # Get IDs of users the current user follows
+    following_res = await db.execute(
+        select(Follow.following_id).where(Follow.follower_id == current_user.id)
+    )
+    following_ids = [row[0] for row in following_res.all()]
+
+    if not following_ids:
+        return {"posts": [], "total": 0}
+
+    total_res = await db.execute(
+        select(func.count(Post.id)).where(Post.user_id.in_(following_ids))
+    )
+    total = total_res.scalar()
+
+    result = await db.execute(
+        select(Post)
+        .where(Post.user_id.in_(following_ids))
+        .options(selectinload(Post.media), joinedload(Post.location), joinedload(Post.user))
+        .order_by(Post.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    posts = result.scalars().unique().all()
+
+    like_set = await _user_like_set(db, current_user, [p.id for p in posts])
+    like_counts = await _like_counts(db, [p.id for p in posts])
+    comment_counts = await _comment_counts(db, [p.id for p in posts])
+
+    def serialize(p: Post) -> dict:
+        media = [{"url": m.media_url, "media_type": m.media_type} for m in p.media]
+        if not media and p.image_url:
+            media = [{"url": p.image_url, "media_type": "image"}]
+        return {
+            "id": p.id,
+            "content": p.content,
+            "user_id": p.user_id,
+            "username": p.user.username if p.user else f"user_{p.user_id}",
+            "avatar_url": p.user.avatar_url if p.user else None,
+            "location_name": p.location.name if p.location else None,
+            "location_id": p.location_id,
+            "distance_km": None,
+            "media": media,
+            "like_count": like_counts.get(p.id, 0),
+            "comment_count": comment_counts.get(p.id, 0),
+            "is_liked": p.id in like_set,
+        }
+
+    return {"posts": [serialize(p) for p in posts], "total": total}
 
 
 # ── Search History ───────────────────────────────────────────────────────────

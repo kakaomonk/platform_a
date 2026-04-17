@@ -19,19 +19,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [geoStatus, setGeoStatus] = useState<'pending' | 'granted' | 'denied'>('pending');
   const [profileUserId, setProfileUserId] = useState<number | null>(null);
+  const [feedTab, setFeedTab] = useState<'discover' | 'following'>('discover');
 
   const coords = userCoords ?? DEFAULT_COORDS;
 
   const authHeader = (): Record<string, string> =>
     user ? { Authorization: `Bearer ${user.token}` } : {};
 
-  const fetchFeed = useCallback(async (lat: number, lng: number) => {
+  const fetchFeed = useCallback(async (lat: number, lng: number, tab: 'discover' | 'following' = 'discover') => {
     setLoading(true);
     try {
       const headers: Record<string, string> = user
         ? { Authorization: `Bearer ${user.token}` }
         : {};
-      const res = await fetch(`${API_BASE}/feed/?lat=${lat}&lng=${lng}`, { headers });
+      const url = tab === 'following'
+        ? `${API_BASE}/feed/following`
+        : `${API_BASE}/feed/?lat=${lat}&lng=${lng}`;
+      const res = await fetch(url, { headers });
       const data = await res.json();
       setPosts(data.posts ?? []);
     } catch (err) {
@@ -66,12 +70,12 @@ export default function App() {
       .catch(() => {});
   }, [userCoords]);
 
-  // Fetch proximity feed
+  // Fetch feed on tab/coord change
   useEffect(() => {
-    fetchFeed(coords.lat, coords.lng);
-  }, [coords.lat, coords.lng, fetchFeed]);
+    fetchFeed(coords.lat, coords.lng, feedTab);
+  }, [coords.lat, coords.lng, fetchFeed, feedTab]);
 
-  const refreshFeed = () => fetchFeed(coords.lat, coords.lng);
+  const refreshFeed = () => fetchFeed(coords.lat, coords.lng, feedTab);
 
   const handleSearchSelect = async (locationId: number) => {
     if (user) {
@@ -153,6 +157,18 @@ export default function App() {
       <Navbar onProfileClick={() => user && setProfileUserId(user.id)} />
       <div className="layout">
         <main className="feed">
+          {user && (
+            <div className="feed-tabs">
+              <button
+                className={`feed-tab${feedTab === 'discover' ? ' feed-tab--active' : ''}`}
+                onClick={() => setFeedTab('discover')}
+              >발견</button>
+              <button
+                className={`feed-tab${feedTab === 'following' ? ' feed-tab--active' : ''}`}
+                onClick={() => setFeedTab('following')}
+              >팔로잉</button>
+            </div>
+          )}
           {user ? (
             <PostComposer fallbackLocationId={defaultLocationId} onSubmit={handlePost} />
           ) : (

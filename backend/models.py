@@ -92,3 +92,16 @@ class Comment(Base):
 
     user = relationship("User")
     post = relationship("Post")
+
+
+class Follow(Base):
+    __tablename__ = "follows"
+    id = Column(Integer, primary_key=True, index=True)
+    follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("follower_id", "following_id", name="uq_follow"),)
+
+    follower = relationship("User", foreign_keys=[follower_id])
+    following = relationship("User", foreign_keys=[following_id])

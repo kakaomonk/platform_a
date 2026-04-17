@@ -3,6 +3,7 @@ import { Navbar } from './components/Navbar';
 import { PostComposer } from './components/PostComposer';
 import { PostCard } from './components/PostCard';
 import { MapPanel } from './components/MapPanel';
+import { ProfileModal } from './components/ProfileModal';
 import { API_BASE } from './config';
 import { useAuth } from './AuthContext';
 import type { Post } from './types';
@@ -17,6 +18,7 @@ export default function App() {
   const [defaultLocationId, setDefaultLocationId] = useState(1);
   const [loading, setLoading] = useState(false);
   const [geoStatus, setGeoStatus] = useState<'pending' | 'granted' | 'denied'>('pending');
+  const [profileUserId, setProfileUserId] = useState<number | null>(null);
 
   const coords = userCoords ?? DEFAULT_COORDS;
 
@@ -148,7 +150,7 @@ export default function App() {
 
   return (
     <>
-      <Navbar />
+      <Navbar onProfileClick={() => user && setProfileUserId(user.id)} />
       <div className="layout">
         <main className="feed">
           {user ? (
@@ -171,6 +173,7 @@ export default function App() {
                   currentUserId={user?.id ?? null}
                   onDelete={handleDelete}
                   onEdit={handleEdit}
+                  onProfileClick={(uid) => setProfileUserId(uid)}
                 />
               ))}
             </div>
@@ -184,6 +187,10 @@ export default function App() {
           />
         </aside>
       </div>
+
+      {profileUserId !== null && (
+        <ProfileModal userId={profileUserId} onClose={() => setProfileUserId(null)} />
+      )}
     </>
   );
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Post, MediaItem } from '../types';
+import type { Post, MediaItem, Comment } from '../types';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
+import { API_BASE } from '../config';
+import { useAuth } from '../AuthContext';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
 
@@ -11,6 +13,18 @@ function formatDistance(km: number): string {
   return `${Math.round(km).toLocaleString()}km`;
 }
 const avatarColor = (id: number) => AVATAR_PALETTE[id % AVATAR_PALETTE.length];
+
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '방금';
+  if (mins < 60) return `${mins}분 전`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}시간 전`;
+  const days = Math.floor(hrs / 24);
+  return `${days}일 전`;
+}
 
 interface EditChanges {
   content: string;
@@ -23,9 +37,11 @@ interface Props {
   currentUserId: number | null;
   onDelete: (id: number) => void;
   onEdit: (id: number, changes: EditChanges) => Promise<void>;
+  onProfileClick?: (userId: number) => void;
 }
 
-export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
+export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick }: Props) {
+  const { user } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
@@ -33,9 +49,23 @@ export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
   const [saving, setSaving] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
 
+  // Like state
+  const [liked, setLiked] = useState(post.is_liked);
+  const [likeCount, setLikeCount] = useState(post.like_count);
+  const [likeLoading, setLikeLoading] = useState(false);
+
+  // Comment state
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentText, setCommentText] = useState('');
+  const [commentCount, setCommentCount] = useState(post.comment_count);
+  const [commentsLoaded, setCommentsLoaded] = useState(false);
+
   const isOwner = currentUserId !== null && currentUserId === post.user_id;
 
   useEffect(() => { setEditContent(post.content); }, [post.content]);
+  useEffect(() => { setLiked(post.is_liked); setLikeCount(post.like_count); }, [post.is_liked, post.like_count]);
+  useEffect(() => { setCommentCount(post.comment_count); }, [post.comment_count]);
 
   useEffect(() => {
     if (editing && editRef.current) {
@@ -78,6 +108,82 @@ export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
     setEditLocation(null);
   };
 
+  // ── Like ──
+  const toggleLike = async () => {
+    if (!user || likeLoading) return;
+    setLikeLoading(true);
+    const method = liked ? 'DELETE' : 'POST';
+    try {
+      const res = await fetch(`${API_BASE}/posts/${post.id}/like`, {
+        method,
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLiked(!liked);
+        setLikeCount(data.like_count);
+      }
+    } catch { /* ignore */ }
+    finally { setLikeLoading(false); }
+  };
+
+  // ── Comments ──
+  const loadComments = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/posts/${post.id}/comments`);
+      const data = await res.json();
+      setComments(data.comments);
+      setCommentsLoaded(true);
+    } catch { /* ignore */ }
+  };
+
+  const toggleComments = () => {
+    const next = !showComments;
+    setShowComments(next);
+    if (next && !commentsLoaded) loadComments();
+  };
+
+  const submitComment = async () => {
+    if (!user || !commentText.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/posts/${post.id}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`,
+        },
+        body: JSON.stringify({ content: commentText.trim() }),
+      });
+      if (res.ok) {
+        const c: Comment = await res.json();
+        setComments((prev) => [...prev, c]);
+        setCommentCount((n) => n + 1);
+        setCommentText('');
+      }
+    } catch { /* ignore */ }
+  };
+
+  const deleteComment = async (commentId: number) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`${API_BASE}/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (res.ok) {
+        setComments((prev) => prev.filter((c) => c.id !== commentId));
+        setCommentCount((n) => Math.max(0, n - 1));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleCommentKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitComment();
+    }
+  };
+
   return (
     <article className="post-card">
       <Carousel media={post.media} />
@@ -95,8 +201,19 @@ export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
         )}
 
         <div className="post-card__actions">
-          <button className="action-btn" aria-label="좋아요"><HeartIcon /></button>
-          <button className="action-btn" aria-label="댓글"><CommentIcon /></button>
+          <button
+            className={`action-btn${liked ? ' action-btn--liked' : ''}`}
+            aria-label="좋아요"
+            onClick={toggleLike}
+            disabled={!user}
+          >
+            {liked ? <HeartFilledIcon /> : <HeartIcon />}
+          </button>
+          {likeCount > 0 && <span className="post-card__like-count">{likeCount}</span>}
+          <button className="action-btn" aria-label="댓글" onClick={toggleComments}>
+            <CommentIcon />
+          </button>
+          {commentCount > 0 && <span className="post-card__comment-count">{commentCount}</span>}
           <div className="post-card__actions-right">
             {isOwner && (
               confirmDelete ? (
@@ -155,12 +272,56 @@ export function PostCard({ post, currentUserId, onDelete, onEdit }: Props) {
         ) : (
           post.content && (
             <p className="post-card__content">
-              <strong style={{ color: avatarColor(post.user_id) }}>
+              <strong
+                style={{ color: avatarColor(post.user_id), cursor: onProfileClick ? 'pointer' : undefined }}
+                onClick={() => onProfileClick?.(post.user_id)}
+              >
                 {post.username ?? `user_${post.user_id}`}
               </strong>
               {' '}{post.content}
             </p>
           )
+        )}
+
+        {/* Comment section */}
+        {showComments && (
+          <div className="post-card__comments">
+            {comments.map((c) => (
+              <div key={c.id} className="post-card__comment">
+                <div className="post-card__comment-body">
+                  <strong
+                    style={{ color: avatarColor(c.user_id), cursor: onProfileClick ? 'pointer' : undefined }}
+                    onClick={() => onProfileClick?.(c.user_id)}
+                  >
+                    {c.username}
+                  </strong>
+                  {' '}{c.content}
+                  <span className="post-card__comment-time">{timeAgo(c.created_at)}</span>
+                </div>
+                {currentUserId === c.user_id && (
+                  <button className="post-card__comment-del" onClick={() => deleteComment(c.id)} aria-label="삭제">×</button>
+                )}
+              </div>
+            ))}
+            {user && (
+              <div className="post-card__comment-input-row">
+                <input
+                  className="post-card__comment-input"
+                  placeholder="댓글 달기..."
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={handleCommentKey}
+                />
+                <button
+                  className="post-card__comment-submit"
+                  onClick={submitComment}
+                  disabled={!commentText.trim()}
+                >
+                  게시
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </article>
@@ -216,6 +377,9 @@ function PinIcon() {
 }
 function HeartIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;
+}
+function HeartFilledIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="#ef4444" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>;
 }
 function CommentIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;

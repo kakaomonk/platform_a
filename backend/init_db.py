@@ -1,6 +1,6 @@
 import asyncio
 from database import engine, Base
-from models import Location, User, Post, SearchHistory
+from models import Location, User, Post, SearchHistory, Like, Comment
 
 async def init_db():
     async with engine.begin() as conn:

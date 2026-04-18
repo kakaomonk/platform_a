@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Post, MediaItem, Comment } from '../types';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
@@ -15,27 +16,11 @@ function formatDistance(km: number): string {
 }
 const avatarColor = (id: number) => AVATAR_PALETTE[id % AVATAR_PALETTE.length];
 
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return '';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '방금';
-  if (mins < 60) return `${mins}분 전`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}시간 전`;
-  const days = Math.floor(hrs / 24);
-  return `${days}일 전`;
-}
-
 function renderMentions(text: string) {
   const parts = text.split(/(@\w+)/g);
   return parts.map((part, i) => {
     if (/^@\w+$/.test(part)) {
-      return (
-        <span key={i} className="mention" onClick={() => { /* open profile by username — future */ }}>
-          {part}
-        </span>
-      );
+      return <span key={i} className="mention">{part}</span>;
     }
     return part;
   });
@@ -57,6 +42,7 @@ interface Props {
 }
 
 export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick }: Props) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -195,11 +181,22 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment(); }
   };
 
+  function timeAgo(dateStr: string | null): string {
+    if (!dateStr) return '';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return t('post.just_now');
+    if (mins < 60) return t('post.mins_ago', { n: mins });
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return t('post.hours_ago', { n: hrs });
+    return t('post.days_ago', { n: Math.floor(hrs / 24) });
+  }
+
   const catInfo = CATEGORIES.find((c) => c.id === post.category);
 
   return (
     <article className="post-card">
-      <Carousel media={post.media} />
+      <Carousel media={post.media} t={t} />
       <div className="post-card__body">
         {(post.location_name || post.distance_km != null) && !editing && (
           <div className="post-card__location">
@@ -211,28 +208,28 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               )}
             </span>
             {catInfo && (
-              <span className="post-card__cat-tag">{catInfo.emoji} {catInfo.label}</span>
+              <span className="post-card__cat-tag">{catInfo.emoji} {t(`cat.${catInfo.id}`)}</span>
             )}
           </div>
         )}
 
         {catInfo && !post.location_name && !editing && (
           <div className="post-card__location">
-            <span className="post-card__cat-tag">{catInfo.emoji} {catInfo.label}</span>
+            <span className="post-card__cat-tag">{catInfo.emoji} {t(`cat.${catInfo.id}`)}</span>
           </div>
         )}
 
         <div className="post-card__actions">
           <button
             className={`action-btn${liked ? ' action-btn--liked' : ''}`}
-            aria-label="좋아요"
+            aria-label={t('post.like')}
             onClick={toggleLike}
             disabled={!user}
           >
             {liked ? <HeartFilledIcon /> : <HeartIcon />}
           </button>
           {likeCount > 0 && <span className="post-card__like-count">{likeCount}</span>}
-          <button className="action-btn" aria-label="댓글" onClick={toggleComments}>
+          <button className="action-btn" aria-label={t('post.comment')} onClick={toggleComments}>
             <CommentIcon />
           </button>
           {commentCount > 0 && <span className="post-card__comment-count">{commentCount}</span>}
@@ -240,27 +237,27 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
             {isOwner && (
               confirmDelete ? (
                 <div className="post-card__delete-confirm">
-                  <span>삭제할까요?</span>
-                  <button className="post-card__confirm-yes" onClick={() => onDelete(post.id)}>삭제</button>
-                  <button className="post-card__confirm-no" onClick={() => setConfirmDelete(false)}>취소</button>
+                  <span>{t('post.delete_confirm')}</span>
+                  <button className="post-card__confirm-yes" onClick={() => onDelete(post.id)}>{t('post.delete')}</button>
+                  <button className="post-card__confirm-no" onClick={() => setConfirmDelete(false)}>{t('post.cancel')}</button>
                 </div>
               ) : (
                 <>
-                  <button className="action-btn" aria-label="저장"><BookmarkIcon /></button>
+                  <button className="action-btn" aria-label={t('post.save')}><BookmarkIcon /></button>
                   <button
                     className="action-btn"
-                    aria-label="편집"
+                    aria-label={t('post.edit')}
                     onClick={() => { setEditing(true); setConfirmDelete(false); }}
                   ><PencilIcon /></button>
                   <button
                     className="action-btn action-btn--danger"
-                    aria-label="삭제"
+                    aria-label={t('post.delete')}
                     onClick={() => { setConfirmDelete(true); setEditing(false); }}
                   ><TrashIcon /></button>
                 </>
               )
             )}
-            {!isOwner && <button className="action-btn" aria-label="저장"><BookmarkIcon /></button>}
+            {!isOwner && <button className="action-btn" aria-label={t('post.save')}><BookmarkIcon /></button>}
           </div>
         </div>
 
@@ -273,11 +270,11 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               onChange={(e) => setEditContent(e.target.value)}
               onInput={autoResizeEdit}
               onKeyDown={handleKeyDown}
-              placeholder="내용을 입력하세요"
+              placeholder={t('post.content_placeholder')}
             />
             <LocationSearchInput
               initialValue={post.location_name ?? ''}
-              placeholder="위치 변경..."
+              placeholder={t('post.location_change')}
               onSelect={setEditLocation}
               onClear={() => setEditLocation(null)}
             />
@@ -288,8 +285,8 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               >
                 <TagIcon />
                 {editCategory
-                  ? `${CATEGORIES.find((c) => c.id === editCategory)?.emoji ?? ''} ${CATEGORIES.find((c) => c.id === editCategory)?.label ?? ''}`
-                  : '카테고리'}
+                  ? `${CATEGORIES.find((c) => c.id === editCategory)?.emoji ?? ''} ${t(`cat.${editCategory}`)}`
+                  : t('post.category')}
               </button>
               {editCategory && (
                 <button className="post-card__edit-cat-clear" onClick={() => setEditCategory(null)}>×</button>
@@ -304,17 +301,17 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                     onClick={() => setEditCategory(editCategory === c.id ? null : c.id)}
                   >
                     <span>{c.emoji}</span>
-                    <span>{c.label}</span>
+                    <span>{t(`cat.${c.id}`)}</span>
                   </button>
                 ))}
               </div>
             )}
             <div className="post-card__edit-footer">
-              <span className="post-card__edit-hint">⌘Enter 저장 · Esc 취소</span>
+              <span className="post-card__edit-hint">{t('post.save_hint')}</span>
               <div className="post-card__edit-btns">
-                <button className="post-card__edit-cancel" onClick={cancelEdit}>취소</button>
+                <button className="post-card__edit-cancel" onClick={cancelEdit}>{t('post.cancel')}</button>
                 <button className="post-card__edit-save" onClick={handleSave} disabled={saving}>
-                  {saving ? '저장 중…' : '저장'}
+                  {saving ? t('post.saving') : t('post.save')}
                 </button>
               </div>
             </div>
@@ -348,7 +345,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                   <span className="post-card__comment-time">{timeAgo(c.created_at)}</span>
                 </div>
                 {currentUserId === c.user_id && (
-                  <button className="post-card__comment-del" onClick={() => deleteComment(c.id)} aria-label="삭제">×</button>
+                  <button className="post-card__comment-del" onClick={() => deleteComment(c.id)} aria-label={t('post.delete')}>×</button>
                 )}
               </div>
             ))}
@@ -356,7 +353,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               <div className="post-card__comment-input-row">
                 <input
                   className="post-card__comment-input"
-                  placeholder="댓글 달기..."
+                  placeholder={t('post.comment_placeholder')}
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                   onKeyDown={handleCommentKey}
@@ -366,7 +363,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                   onClick={submitComment}
                   disabled={!commentText.trim()}
                 >
-                  게시
+                  {t('post.post_comment')}
                 </button>
               </div>
             )}
@@ -379,7 +376,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
 
 // ── Carousel ──────────────────────────────────────────────────────────────────
 
-function Carousel({ media }: { media: MediaItem[] }) {
+function Carousel({ media, t }: { media: MediaItem[]; t: (key: string, opts?: object) => string }) {
   const [index, setIndex] = useState(0);
   const [dragStart, setDragStart] = useState<number | null>(null);
 
@@ -404,11 +401,11 @@ function Carousel({ media }: { media: MediaItem[] }) {
         : <img key={index} src={current.url} alt="" className="carousel__media" />}
       {media.length > 1 && (
         <>
-          <button className="carousel__btn carousel__btn--prev" onClick={prev} aria-label="이전"><ChevronLeftIcon /></button>
-          <button className="carousel__btn carousel__btn--next" onClick={next} aria-label="다음"><ChevronRightIcon /></button>
+          <button className="carousel__btn carousel__btn--prev" onClick={prev} aria-label={t('post.prev')}><ChevronLeftIcon /></button>
+          <button className="carousel__btn carousel__btn--next" onClick={next} aria-label={t('post.next')}><ChevronRightIcon /></button>
           <div className="carousel__dots">
             {media.map((_, i) => (
-              <button key={i} className={`carousel__dot${i === index ? ' carousel__dot--active' : ''}`} onClick={() => setIndex(i)} aria-label={`슬라이드 ${i + 1}`} />
+              <button key={i} className={`carousel__dot${i === index ? ' carousel__dot--active' : ''}`} onClick={() => setIndex(i)} aria-label={t('post.slide', { n: i + 1 })} />
             ))}
           </div>
           <div className="carousel__counter">{index + 1} / {media.length}</div>

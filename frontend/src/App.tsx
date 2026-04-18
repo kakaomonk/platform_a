@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from './useTheme';
 import { Navbar } from './components/Navbar';
 import { PostComposer } from './components/PostComposer';
@@ -28,11 +29,12 @@ function NearbyCitiesBox({
   cities: NearbyCity[];
   onSelect: (id: number, name: string, lat: number, lng: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="nearby-cities">
       <div className="nearby-cities__header">
-        <span className="nearby-cities__title">근처 도시 탐색</span>
-        <span className="nearby-cities__sub">포스트가 있는 가까운 도시</span>
+        <span className="nearby-cities__title">{t('feed.nearby_cities')}</span>
+        <span className="nearby-cities__sub">{t('feed.cities_with_posts')}</span>
       </div>
       <div className="nearby-cities__list">
         {cities.map((city) => (
@@ -50,7 +52,7 @@ function NearbyCitiesBox({
             <span className="nearby-city-btn__meta">
               {city.distance_km < 1 ? `${Math.round(city.distance_km * 1000)}m` : `${city.distance_km}km`}
               {' · '}
-              {city.post_count}개
+              {t('feed.posts_count', { count: city.post_count })}
             </span>
           </button>
         ))}
@@ -62,6 +64,7 @@ function NearbyCitiesBox({
 const DEFAULT_COORDS = { lat: 37.5665, lng: 126.978 };
 
 export default function App() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
 
@@ -340,22 +343,22 @@ export default function App() {
               <button
                 className={`feed-tab${feedTab === 'discover' ? ' feed-tab--active' : ''}`}
                 onClick={() => setFeedTab('discover')}
-              >발견</button>
+              >{t('feed.discover')}</button>
               <button
                 className={`feed-tab${feedTab === 'following' ? ' feed-tab--active' : ''}`}
                 onClick={() => setFeedTab('following')}
-              >팔로잉</button>
+              >{t('feed.following')}</button>
             </div>
           )}
 
           {isSearchMode && (
             <div className="search-results-header">
-              <strong>"{searchQuery}"</strong> 검색 결과 {searchTotal}개
+              {t('feed.search_results', { query: searchQuery, count: searchTotal })}
             </div>
           )}
           {isLocationMode && (
             <div className="search-results-header">
-              📍 <strong>{locationFilter!.name}</strong> 게시물
+              {t('feed.location_posts', { name: locationFilter!.name })}
             </div>
           )}
 
@@ -364,17 +367,17 @@ export default function App() {
               <PostComposer fallbackLocationId={defaultLocationId} onSubmit={handlePost} />
             ) : (
               <div className="feed__login-prompt">
-                게시물을 올리려면 <strong>로그인</strong>이 필요합니다.
+                {t('feed.login_required')}
               </div>
             )
           )}
 
           {displayLoading ? (
-            <p className="feed__state">불러오는 중…</p>
+            <p className="feed__state">{t('feed.loading')}</p>
           ) : displayPosts.length === 0 ? (
             <>
               <p className="feed__state">
-                {isSearchMode ? '검색 결과가 없습니다.' : isLocationMode ? '이 위치의 게시물이 없습니다.' : '아직 게시물이 없습니다.'}
+                {isSearchMode ? t('feed.no_results') : isLocationMode ? t('feed.no_location_posts') : t('feed.no_posts')}
               </p>
               {isLocationMode && nearbyCities.length > 0 && (
                 <NearbyCitiesBox

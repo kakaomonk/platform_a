@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { APIProvider, Map, AdvancedMarker } from '@vis.gl/react-google-maps';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
@@ -12,6 +13,8 @@ interface Props {
 }
 
 export function MapPanel({ userCoords, geoStatus, onSearchSelect, onLocationClear }: Props) {
+  const { t } = useTranslation();
+
   const handleSelect = (loc: SelectedLocation) => {
     onSearchSelect(loc.id, loc.name, loc.lat, loc.lng);
   };
@@ -28,7 +31,7 @@ export function MapPanel({ userCoords, geoStatus, onSearchSelect, onLocationClea
         ) : (
           <div className="map-panel__placeholder">
             <MapIcon />
-            <span>Google Maps API 키를 설정하면<br />지도가 표시됩니다</span>
+            <span style={{ whiteSpace: 'pre-line' }}>{t('map.api_hint')}</span>
           </div>
         )}
       </div>
@@ -37,14 +40,14 @@ export function MapPanel({ userCoords, geoStatus, onSearchSelect, onLocationClea
           <GpsIcon />
           <span>
             {geoStatus === 'pending'
-              ? '위치 확인 중…'
+              ? t('map.locating')
               : geoStatus === 'granted'
-                ? '내 위치 기준 정렬'
-                : '기본 위치(서울) 기준 정렬'}
+                ? t('map.sorted_my')
+                : t('map.sorted_default')}
           </span>
         </div>
         <LocationSearchInput
-          placeholder="도시를 검색해 포스트 필터링"
+          placeholder={t('map.search_placeholder')}
           onSelect={handleSelect}
           onClear={onLocationClear}
         />

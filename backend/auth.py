@@ -12,7 +12,9 @@ from sqlalchemy.future import select
 from database import get_db
 from models import User
 
-SECRET_KEY = os.environ.get("SECRET_KEY") or "dev-secret-change-in-production"
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable must be set")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 

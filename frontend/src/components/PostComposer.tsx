@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
 import { useAuth } from '../AuthContext';
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [content, setContent] = useState('');
   const [previews, setPreviews] = useState<PreviewItem[]>([]);
@@ -82,7 +84,7 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
         <textarea
           ref={textareaRef}
           className="composer__textarea"
-          placeholder="무엇을 발견했나요?"
+          placeholder={t('composer.placeholder')}
           value={content}
           rows={1}
           onChange={(e) => setContent(e.target.value)}
@@ -97,10 +99,10 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
                   ? <video src={item.previewUrl} className="composer__preview-thumb" muted playsInline />
                   : <img src={item.previewUrl} alt="" className="composer__preview-thumb" />}
                 {item.mediaType === 'video' && <div className="composer__video-badge"><PlayIcon /></div>}
-                <button className="composer__preview-remove" onClick={() => removePreview(i)} aria-label="제거">×</button>
+                <button className="composer__preview-remove" onClick={() => removePreview(i)} aria-label={t('composer.remove')}>×</button>
               </div>
             ))}
-            <button className="composer__add-more" onClick={() => fileRef.current?.click()} title="더 추가">
+            <button className="composer__add-more" onClick={() => fileRef.current?.click()} title={t('composer.add_more')}>
               <PlusIcon />
             </button>
           </div>
@@ -122,20 +124,20 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
                 onClick={() => setCategory(category === c.id ? null : c.id)}
               >
                 <span>{c.emoji}</span>
-                <span>{c.label}</span>
+                <span>{t(`cat.${c.id}`)}</span>
               </button>
             ))}
           </div>
         )}
 
         <div className="composer__footer">
-          <button className="composer__img-btn" onClick={() => fileRef.current?.click()} title="사진/동영상 첨부">
+          <button className="composer__img-btn" onClick={() => fileRef.current?.click()} title={t('composer.attach_media')}>
             <ImageIcon />
           </button>
           <button
             className={`composer__img-btn${showCategories ? ' composer__img-btn--active' : ''}`}
             onClick={() => setShowCategories((v) => !v)}
-            title="카테고리 선택"
+            title={t('composer.select_category')}
           >
             {selectedCat ? (
               <span style={{ fontSize: '16px', lineHeight: 1 }}>{selectedCat.emoji}</span>
@@ -146,8 +148,8 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
           <input ref={fileRef} type="file" accept="image/*,video/*" multiple hidden onChange={addFiles} />
           {selectedCat && (
             <span className="composer__cat-badge">
-              {selectedCat.emoji} {selectedCat.label}
-              <button onClick={() => setCategory(null)} aria-label="카테고리 지우기">×</button>
+              {selectedCat.emoji} {t(`cat.${selectedCat.id}`)}
+              <button onClick={() => setCategory(null)} aria-label={t('composer.clear_category')}>×</button>
             </span>
           )}
           <button
@@ -155,7 +157,7 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
             onClick={handleSubmit}
             disabled={submitting || (!content.trim() && !previews.length)}
           >
-            {submitting ? '게시 중…' : '게시하기'}
+            {submitting ? t('composer.posting') : t('composer.post')}
           </button>
         </div>
       </div>

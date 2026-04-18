@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../config';
 
 interface Suggestion {
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function LocationSearchInput({ initialValue, placeholder, showGps, onSelect, onClear }: Props) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState(initialValue ?? '');
   const [selected, setSelected] = useState<SelectedLocation | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -32,12 +34,10 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Sync external initialValue changes (e.g., when edit mode opens with existing location)
   useEffect(() => {
     if (initialValue !== undefined) setQuery(initialValue);
   }, [initialValue]);
 
-  // Debounced Photon search
   useEffect(() => {
     if (selected || query.trim().length < 2) {
       setSuggestions([]);
@@ -82,7 +82,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
       setQuery(data.name);
       onSelect(loc);
     } catch {
-      setError('위치 저장 실패');
+      setError(t('loc.save_failed'));
     } finally {
       setLoading(false);
     }
@@ -98,7 +98,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
   };
 
   const requestGps = () => {
-    if (!navigator.geolocation) { setError('위치 서비스 미지원'); return; }
+    if (!navigator.geolocation) { setError(t('loc.not_supported')); return; }
     setLoading(true);
     setError(null);
     navigator.geolocation.getCurrentPosition(
@@ -113,12 +113,12 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
           setQuery(data.name);
           onSelect(loc);
         } catch {
-          setError('위치 조회 실패');
+          setError(t('loc.get_failed'));
         } finally {
           setLoading(false);
         }
       },
-      () => { setError('위치 접근 거부'); setLoading(false); },
+      () => { setError(t('loc.access_denied')); setLoading(false); },
       { timeout: 10_000, maximumAge: 60_000 }
     );
   };
@@ -132,7 +132,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
           </span>
           <input
             className={`loc-search__input${selected ? ' loc-search__input--set' : ''}`}
-            placeholder={placeholder ?? '위치 추가 (도시 검색 또는 GPS)'}
+            placeholder={placeholder ?? t('loc.placeholder')}
             value={query}
             onChange={handleChange}
             onFocus={() => { if (suggestions.length) setShowDropdown(true); }}
@@ -140,7 +140,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
             autoComplete="off"
           />
           {(selected || query) && (
-            <button className="loc-search__clear" onClick={clear} aria-label="위치 지우기">×</button>
+            <button className="loc-search__clear" onClick={clear} aria-label={t('loc.clear')}>×</button>
           )}
         </div>
         {showGps && (
@@ -148,7 +148,7 @@ export function LocationSearchInput({ initialValue, placeholder, showGps, onSele
             className="loc-search__gps-btn"
             onClick={requestGps}
             disabled={loading}
-            title="현재 위치"
+            title={t('loc.current')}
           >
             <GpsIcon />
           </button>

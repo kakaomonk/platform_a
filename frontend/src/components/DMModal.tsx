@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../config';
 import { useAuth } from '../AuthContext';
 
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export function DMModal({ onClose, initialUserId }: Props) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const overlayRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -60,13 +62,11 @@ export function DMModal({ onClose, initialUserId }: Props) {
     } catch { /* ignore */ }
   }, [user]);
 
-  // Initial load
   useEffect(() => {
     setLoadingConvs(true);
     fetchConvs().finally(() => setLoadingConvs(false));
   }, [fetchConvs]);
 
-  // Open conversation with target user (from ProfileModal)
   useEffect(() => {
     if (!initialUserId || !user) return;
     (async () => {
@@ -78,7 +78,6 @@ export function DMModal({ onClose, initialUserId }: Props) {
         });
         const data = await res.json();
         await fetchConvs();
-        // Find the other user info from the fetched conversations or fetch profile
         const convRes = await fetch(`${API_BASE}/dm/conversations/`, { headers: authHeader() });
         const convData = await convRes.json();
         const found = (convData.conversations ?? []).find((c: ConvSummary) => c.id === data.id);
@@ -90,19 +89,16 @@ export function DMModal({ onClose, initialUserId }: Props) {
     })();
   }, [initialUserId, user]);
 
-  // Poll for new messages when a conversation is active
   useEffect(() => {
     if (!activeConvId) return;
     const id = setInterval(() => fetchMessages(activeConvId), 3000);
     return () => clearInterval(id);
   }, [activeConvId, fetchMessages]);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Escape key
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handler);
@@ -115,7 +111,6 @@ export function DMModal({ onClose, initialUserId }: Props) {
     setLoadingMsgs(true);
     await fetchMessages(convId);
     setLoadingMsgs(false);
-    // Mark as read in UI
     setConvs((prev) => prev.map((c) => c.id === convId ? { ...c, unread_count: 0 } : c));
   };
 
@@ -146,11 +141,11 @@ export function DMModal({ onClose, initialUserId }: Props) {
     if (!iso) return '';
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return '방금';
-    if (mins < 60) return `${mins}분 전`;
+    if (mins < 1) return t('dm.just_now');
+    if (mins < 60) return t('dm.mins_ago', { n: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}시간 전`;
-    return `${Math.floor(hrs / 24)}일 전`;
+    if (hrs < 24) return t('dm.hours_ago', { n: hrs });
+    return t('dm.days_ago', { n: Math.floor(hrs / 24) });
   }
 
   return (
@@ -172,9 +167,9 @@ export function DMModal({ onClose, initialUserId }: Props) {
               <span className="dm-modal__header-title">@{activeOther?.username}</span>
             </>
           ) : (
-            <span className="dm-modal__header-title">메시지</span>
+            <span className="dm-modal__header-title">{t('dm.title')}</span>
           )}
-          <button className="dm-modal__close" onClick={onClose} aria-label="닫기">
+          <button className="dm-modal__close" onClick={onClose} aria-label={t('dm.close')}>
             <CloseIcon />
           </button>
         </div>
@@ -182,9 +177,9 @@ export function DMModal({ onClose, initialUserId }: Props) {
         {!activeConvId ? (
           <div className="dm-modal__conv-list">
             {loadingConvs ? (
-              <div className="dm-modal__empty">불러오는 중…</div>
+              <div className="dm-modal__empty">{t('dm.loading')}</div>
             ) : convs.length === 0 ? (
-              <div className="dm-modal__empty">대화가 없습니다.<br />프로필에서 메시지를 보내보세요.</div>
+              <div className="dm-modal__empty" style={{ whiteSpace: 'pre-line' }}>{t('dm.no_conversations')}</div>
             ) : convs.map((c) => (
               <button
                 key={c.id}
@@ -215,9 +210,9 @@ export function DMModal({ onClose, initialUserId }: Props) {
           <>
             <div className="dm-modal__messages">
               {loadingMsgs ? (
-                <div className="dm-modal__empty">불러오는 중…</div>
+                <div className="dm-modal__empty">{t('dm.loading')}</div>
               ) : messages.length === 0 ? (
-                <div className="dm-modal__empty">첫 메시지를 보내보세요!</div>
+                <div className="dm-modal__empty">{t('dm.first_message')}</div>
               ) : messages.map((m) => {
                 const isMine = m.sender_id === user?.id;
                 return (
@@ -232,7 +227,7 @@ export function DMModal({ onClose, initialUserId }: Props) {
             <div className="dm-modal__input-row">
               <input
                 className="dm-modal__input"
-                placeholder="메시지 입력…"
+                placeholder={t('dm.input_placeholder')}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -242,7 +237,7 @@ export function DMModal({ onClose, initialUserId }: Props) {
                 className="dm-modal__send"
                 onClick={sendMessage}
                 disabled={!draft.trim() || sending}
-                aria-label="보내기"
+                aria-label={t('dm.send')}
               >
                 <SendIcon />
               </button>

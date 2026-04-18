@@ -2,9 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Global
-항상 10년차 이상 시니어 엔지니어가 할만한 판단과 작업으로 마무리 해줘.
+## Global Rules
 
+### Exploration Rules
+- Only read files that are explicitly requested or clearly relevant
+- Always check existing file structure before creating new files
+- Read only the necessary function/section, not the entire file
+
+### Code Change Rules
+- Minimize change scope — focus only on the requested feature
+- Maintain consistency with existing patterns (naming, style, structure)
+- Refactor only when explicitly requested
+- If side effects are expected, explain them first and confirm before proceeding
+
+### Response Rules
+- Briefly summarize which files were changed and why
+- Ask clarifying questions before writing code if requirements are unclear
+- Omit unnecessary explanations, comments, and boilerplate
 ## What This Is
 
 Location-based social discovery platform (Instagram/Xiaohongshu-style). Users post photos/videos tagged to real cities, browse a proximity-sorted feed, and filter by location. Korean-language UI strings.

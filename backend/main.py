@@ -1,17 +1,20 @@
 import asyncio
 import math
 import os
-import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
+
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 import requests as http_requests
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func, or_, update as sa_update
+from sqlalchemy import and_, func, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload, contains_eager
@@ -19,18 +22,21 @@ from sqlalchemy.orm import selectinload, joinedload, contains_eager
 from database import get_db
 from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment, Follow, Conversation, DirectMessage  # noqa: F401
 from auth import hash_password, verify_password, create_token, get_optional_user, require_user
+from storage import save_file, delete_file
 
 app = FastAPI()
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:9000")
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")]
 
-os.makedirs("uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+if not os.getenv("S3_BUCKET"):
+    os.makedirs("uploads", exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https?://localhost:\d+/?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -116,11 +122,9 @@ async def upload_media(files: List[UploadFile] = File(...)):
     for file in files:
         ext = os.path.splitext(file.filename or "")[1].lower()
         safe_name = f"{uuid4().hex}{ext}"
-        dest = f"uploads/{safe_name}"
-        with open(dest, "wb") as buf:
-            shutil.copyfileobj(file.file, buf)
         media_type = "video" if ext in VIDEO_EXTS else "image"
-        result.append({"url": f"{BASE_URL}/{dest}", "media_type": media_type})
+        url = save_file(file.file, safe_name, file.content_type or "application/octet-stream")
+        result.append({"url": url, "media_type": media_type})
     return {"media": result}
 
 
@@ -222,7 +226,8 @@ async def _find_or_create_loc(name: str, lat: float, lng: float, db: AsyncSessio
     )
     loc = existing.scalars().first()
     if not loc:
-        loc = Location(name=name, level="city", coordinates=f"{lat:.6f},{lng:.6f}")
+        loc = Location(name=name, level="city", coordinates=f"{lat:.6f},{lng:.6f}",
+                       latitude=lat, longitude=lng)
         db.add(loc)
         await db.commit()
         await db.refresh(loc)
@@ -514,7 +519,23 @@ async def proximity_feed(
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     limit = min(limit, 50)
-    feed_q = select(Post).options(selectinload(Post.media), joinedload(Post.location), joinedload(Post.user))
+    # ~5,000 km bounding box — shrinks the fetch set before Python distance sort
+    LAT_DELTA = 45.0
+    lng_delta = min(90.0, LAT_DELTA / max(math.cos(math.radians(lat)), 0.017))
+    feed_q = (
+        select(Post)
+        .join(Post.location)
+        .where(
+            or_(
+                Location.latitude.is_(None),
+                and_(
+                    Location.latitude.between(lat - LAT_DELTA, lat + LAT_DELTA),
+                    Location.longitude.between(lng - lng_delta, lng + lng_delta),
+                ),
+            )
+        )
+        .options(selectinload(Post.media), contains_eager(Post.location), joinedload(Post.user))
+    )
     if category:
         feed_q = feed_q.where(Post.category == category)
     result = await db.execute(feed_q)
@@ -787,18 +808,9 @@ async def upload_avatar(
     if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         raise HTTPException(status_code=422, detail="이미지 파일만 업로드 가능합니다")
     safe_name = f"avatar_{current_user.id}_{uuid4().hex[:8]}{ext}"
-    dest = f"uploads/{safe_name}"
-
-    # Remove old avatar file
-    if current_user.avatar_url:
-        old = current_user.avatar_url.replace(f"{BASE_URL}/", "")
-        if os.path.isfile(old):
-            os.remove(old)
-
-    with open(dest, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
-
-    current_user.avatar_url = f"{BASE_URL}/{dest}"
+    delete_file(current_user.avatar_url)
+    url = save_file(file.file, safe_name, file.content_type or "image/jpeg")
+    current_user.avatar_url = url
     await db.commit()
     return {"avatar_url": current_user.avatar_url}
 

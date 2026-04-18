@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, UniqueConstraint, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, UniqueConstraint, Boolean, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -11,6 +11,8 @@ class Location(Base):
     level = Column(String(50), nullable=False)
     parent_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
     coordinates = Column(String(50))
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
     parent = relationship("Location", remote_side=[id])
 

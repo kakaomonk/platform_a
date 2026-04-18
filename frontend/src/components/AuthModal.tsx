@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../config';
 import { useAuth } from '../AuthContext';
 
@@ -9,6 +10,7 @@ interface Props {
 type Tab = 'login' | 'register';
 
 export function AuthModal({ onClose }: Props) {
+  const { t } = useTranslation();
   const { login } = useAuth();
   const [tab, setTab] = useState<Tab>('login');
   const [username, setUsername] = useState('');
@@ -18,7 +20,6 @@ export function AuthModal({ onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handler);
@@ -50,13 +51,13 @@ export function AuthModal({ onClose }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.detail ?? '오류가 발생했습니다');
+        setError(data.detail ?? t('auth.error_generic'));
         return;
       }
       login(data.token, data.user_id, data.username);
       onClose();
     } catch {
-      setError('서버에 연결할 수 없습니다');
+      setError(t('auth.error_server'));
     } finally {
       setLoading(false);
     }
@@ -74,25 +75,25 @@ export function AuthModal({ onClose }: Props) {
             className={`auth-modal__tab${tab === 'login' ? ' auth-modal__tab--active' : ''}`}
             onClick={() => switchTab('login')}
           >
-            로그인
+            {t('auth.login')}
           </button>
           <button
             className={`auth-modal__tab${tab === 'register' ? ' auth-modal__tab--active' : ''}`}
             onClick={() => switchTab('register')}
           >
-            회원가입
+            {t('auth.signup')}
           </button>
         </div>
 
         <form className="auth-modal__form" onSubmit={handleSubmit} noValidate>
           <div className="auth-modal__field">
-            <label className="auth-modal__label">아이디</label>
+            <label className="auth-modal__label">{t('auth.username')}</label>
             <input
               className="auth-modal__input"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="사용자 이름"
+              placeholder={t('auth.username_placeholder')}
               autoComplete="username"
               autoFocus
               required
@@ -101,7 +102,7 @@ export function AuthModal({ onClose }: Props) {
 
           {tab === 'register' && (
             <div className="auth-modal__field">
-              <label className="auth-modal__label">이메일</label>
+              <label className="auth-modal__label">{t('auth.email')}</label>
               <input
                 className="auth-modal__input"
                 type="email"
@@ -115,13 +116,13 @@ export function AuthModal({ onClose }: Props) {
           )}
 
           <div className="auth-modal__field">
-            <label className="auth-modal__label">비밀번호</label>
+            <label className="auth-modal__label">{t('auth.password')}</label>
             <input
               className="auth-modal__input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={tab === 'register' ? '6자 이상' : '비밀번호'}
+              placeholder={tab === 'register' ? t('auth.password_placeholder_register') : t('auth.password')}
               autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
               required
             />
@@ -130,7 +131,7 @@ export function AuthModal({ onClose }: Props) {
           {error && <p className="auth-modal__error">{error}</p>}
 
           <button className="auth-modal__submit" type="submit" disabled={loading}>
-            {loading ? '처리 중…' : tab === 'login' ? '로그인' : '가입하기'}
+            {loading ? t('auth.processing') : tab === 'login' ? t('auth.login') : t('auth.signup_btn')}
           </button>
         </form>
       </div>

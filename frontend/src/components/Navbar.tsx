@@ -1,10 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../AuthContext';
 import { AuthModal } from './AuthModal';
 import { API_BASE } from '../config';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
 const avatarColor = (id: number) => AVATAR_PALETTE[id % AVATAR_PALETTE.length];
+
+const LANGUAGES = [
+  { code: 'ko', label: '한국어' },
+  { code: 'en', label: 'English' },
+  { code: 'zh', label: '中文' },
+  { code: 'fr', label: 'Français' },
+];
 
 interface LocationSuggestion {
   name: string;
@@ -24,9 +32,11 @@ interface Props {
 }
 
 export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, dmUnreadCount, isDark, onThemeToggle }: Props) {
+  const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const [showAuth, setShowAuth] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
   const [query, setQuery] = useState('');
   const [locSuggestions, setLocSuggestions] = useState<LocationSuggestion[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -34,17 +44,20 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
   const textDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const langRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => () => {
     if (textDebounce.current) clearTimeout(textDebounce.current);
     if (locDebounce.current) clearTimeout(locDebounce.current);
   }, []);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
+      }
+      if (langRef.current && !langRef.current.contains(e.target as Node)) {
+        setShowLangMenu(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -54,11 +67,9 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
   const handleChange = (val: string) => {
     setQuery(val);
 
-    // Text search debounce
     if (textDebounce.current) clearTimeout(textDebounce.current);
     textDebounce.current = setTimeout(() => onSearch?.(val.trim()), 350);
 
-    // Location suggestions debounce
     if (locDebounce.current) clearTimeout(locDebounce.current);
     if (val.trim().length >= 2) {
       locDebounce.current = setTimeout(async () => {
@@ -104,6 +115,8 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
     } catch { /* ignore */ }
   };
 
+  const currentLang = LANGUAGES.find((l) => l.code === i18n.language) ?? LANGUAGES[0];
+
   return (
     <>
       <nav className="navbar">
@@ -117,14 +130,14 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
             <input
               type="text"
               className="navbar__search-input"
-              placeholder="게시물, 장소 검색..."
+              placeholder={t('nav.search')}
               value={query}
               onChange={(e) => handleChange(e.target.value)}
               onFocus={() => { if (locSuggestions.length > 0) setShowDropdown(true); }}
               autoComplete="off"
             />
             {query && (
-              <button className="navbar__search-clear" onClick={handleClear} aria-label="검색 지우기">
+              <button className="navbar__search-clear" onClick={handleClear} aria-label={t('nav.clear_search')}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -139,7 +152,7 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
             )}
             {showDropdown && locSuggestions.length > 0 && (
               <ul className="navbar__loc-dropdown">
-                <li className="navbar__loc-dropdown-label">장소로 필터링</li>
+                <li className="navbar__loc-dropdown-label">{t('nav.filter_location')}</li>
                 {locSuggestions.map((s, i) => (
                   <li
                     key={i}
@@ -157,17 +170,41 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
             )}
           </div>
 
-          <button className="navbar__theme-btn" onClick={onThemeToggle} aria-label="테마 전환">
+          <button className="navbar__theme-btn" onClick={onThemeToggle} aria-label={t('nav.toggle_theme')}>
             {isDark ? <SunIcon /> : <MoonIcon />}
           </button>
+
+          {/* Language switcher */}
+          <div className="navbar__lang-wrap" ref={langRef}>
+            <button
+              className="navbar__lang-btn"
+              onClick={() => setShowLangMenu((v) => !v)}
+              aria-label="Language"
+            >
+              {currentLang.code.toUpperCase()}
+            </button>
+            {showLangMenu && (
+              <div className="navbar__lang-menu">
+                {LANGUAGES.map((lang) => (
+                  <button
+                    key={lang.code}
+                    className={`navbar__lang-option${i18n.language === lang.code ? ' navbar__lang-option--active' : ''}`}
+                    onClick={() => { i18n.changeLanguage(lang.code); setShowLangMenu(false); }}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="navbar__right">
             {user && (
               <button
                 className="navbar__dm-btn"
                 onClick={onDMClick}
-                aria-label="메시지"
-                title="메시지"
+                aria-label={t('nav.messages')}
+                title={t('nav.messages')}
               >
                 <MessageIcon />
                 {(dmUnreadCount ?? 0) > 0 && (
@@ -181,7 +218,7 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
                   className="navbar__avatar"
                   style={{ background: avatarColor(user.id) }}
                   onClick={() => setShowUserMenu((v) => !v)}
-                  aria-label="계정 메뉴"
+                  aria-label={t('nav.account_menu')}
                 >
                   {user.username[0].toUpperCase()}
                 </button>
@@ -192,20 +229,20 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
                       className="navbar__menu-item"
                       onClick={() => { onProfileClick?.(); setShowUserMenu(false); }}
                     >
-                      프로필
+                      {t('nav.profile')}
                     </button>
                     <button
                       className="navbar__logout-btn"
                       onClick={() => { logout(); setShowUserMenu(false); }}
                     >
-                      로그아웃
+                      {t('nav.logout')}
                     </button>
                   </div>
                 )}
               </div>
             ) : (
               <button className="navbar__login-btn" onClick={() => setShowAuth(true)}>
-                로그인
+                {t('nav.login')}
               </button>
             )}
           </div>

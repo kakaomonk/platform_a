@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../config';
 import { useAuth } from '../AuthContext';
 import type { UserProfile } from '../types';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
+  const { t } = useTranslation();
   const { user, login } = useAuth();
   const overlayRef = useRef<HTMLDivElement>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -52,11 +54,7 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
       });
       if (res.ok) {
         const data = await res.json();
-        setProfile({
-          ...profile,
-          is_following: !profile.is_following,
-          follower_count: data.follower_count,
-        });
+        setProfile({ ...profile, is_following: !profile.is_following, follower_count: data.follower_count });
       }
     } catch { /* ignore */ }
     finally { setFollowLoading(false); }
@@ -91,7 +89,6 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
       if (res.ok) {
         const data = await res.json();
         if (profile) setProfile({ ...profile, avatar_url: data.avatar_url });
-        // Update auth context so navbar reflects new avatar
         login(user.token, user.id, user.username);
       }
     } catch { /* ignore */ }
@@ -106,9 +103,9 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
     >
       <div className="profile-modal" role="dialog" aria-modal="true">
         {loading ? (
-          <div className="profile-modal__loading">불러오는 중…</div>
+          <div className="profile-modal__loading">{t('profile.loading')}</div>
         ) : !profile ? (
-          <div className="profile-modal__loading">사용자를 찾을 수 없습니다</div>
+          <div className="profile-modal__loading">{t('profile.not_found')}</div>
         ) : (
           <>
             <div className="profile-modal__header">
@@ -126,7 +123,7 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
                       className="profile-modal__avatar-edit"
                       onClick={() => fileRef.current?.click()}
                       disabled={uploading}
-                      title="프로필 사진 변경"
+                      title={t('profile.change_photo')}
                     >
                       {uploading ? '…' : <CameraIcon />}
                     </button>
@@ -144,12 +141,12 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
                         onClick={toggleFollow}
                         disabled={followLoading}
                       >
-                        {profile.is_following ? '팔로잉' : '팔로우'}
+                        {profile.is_following ? t('profile.following') : t('profile.follow')}
                       </button>
                       <button
                         className="profile-modal__dm-btn"
                         onClick={() => { onDMOpen?.(userId); onClose(); }}
-                        title="메시지 보내기"
+                        title={t('profile.send_message')}
                       >
                         <MessageIcon />
                       </button>
@@ -157,9 +154,9 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
                   )}
                 </div>
                 <div className="profile-modal__stats">
-                  <span>게시물 <strong>{profile.post_count}</strong></span>
-                  <span>팔로워 <strong>{profile.follower_count}</strong></span>
-                  <span>팔로잉 <strong>{profile.following_count}</strong></span>
+                  <span>{t('profile.posts')} <strong>{profile.post_count}</strong></span>
+                  <span>{t('profile.followers')} <strong>{profile.follower_count}</strong></span>
+                  <span>{t('profile.following')} <strong>{profile.following_count}</strong></span>
                 </div>
               </div>
             </div>
@@ -172,14 +169,14 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
                     value={bioText}
                     onChange={(e) => setBioText(e.target.value)}
                     maxLength={300}
-                    placeholder="자기소개를 입력하세요"
+                    placeholder={t('profile.bio_placeholder')}
                     rows={3}
                     autoFocus
                   />
                   <div className="profile-modal__bio-edit-actions">
                     <span className="profile-modal__bio-count">{bioText.length}/300</span>
-                    <button className="post-card__edit-cancel" onClick={() => { setEditingBio(false); setBioText(profile.bio ?? ''); }}>취소</button>
-                    <button className="post-card__edit-save" onClick={saveBio}>저장</button>
+                    <button className="post-card__edit-cancel" onClick={() => { setEditingBio(false); setBioText(profile.bio ?? ''); }}>{t('profile.cancel')}</button>
+                    <button className="post-card__edit-save" onClick={saveBio}>{t('profile.save')}</button>
                   </div>
                 </div>
               ) : (
@@ -187,11 +184,11 @@ export function ProfileModal({ userId, onClose, onDMOpen }: Props) {
                   {profile.bio ? (
                     <p className="profile-modal__bio-text">{profile.bio}</p>
                   ) : isMe ? (
-                    <p className="profile-modal__bio-text profile-modal__bio-text--empty">자기소개를 추가해보세요</p>
+                    <p className="profile-modal__bio-text profile-modal__bio-text--empty">{t('profile.bio_empty')}</p>
                   ) : null}
                   {isMe && (
                     <button className="profile-modal__bio-edit-btn" onClick={() => setEditingBio(true)}>
-                      {profile.bio ? '편집' : '추가'}
+                      {profile.bio ? t('profile.edit') : t('profile.add')}
                     </button>
                   )}
                 </div>

@@ -18,15 +18,19 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-changeme}@db:5432/platform_a
       SECRET_KEY: ${SECRET_KEY}
-      BASE_URL: https://${DOMAIN:-localhost}/api
-      CORS_ORIGINS: https://${DOMAIN:-localhost}
+      BASE_URL: http://${SERVER_HOST:-localhost}/api
+      CORS_ORIGINS: http://${SERVER_HOST:-localhost}
     volumes:
       - uploads:/app/uploads
-    ports:
-      - "9000:9000"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/health').read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     command: >
       sh -c "python init_db.py && python migrate_coords.py && uvicorn main:app --host 0.0.0.0 --port 9000"
 
@@ -35,26 +39,12 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE: /api
-    depends_on:
-      - backend
-
-  caddy:
-    image: caddy:2-alpine
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
     depends_on:
-      - frontend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
   uploads:
-  caddy_data:
-  caddy_config:

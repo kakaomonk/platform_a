@@ -27,11 +27,13 @@ interface Props {
   onLocationSelect?: (id: number, name: string, lat: number, lng: number) => void;
   onDMClick?: () => void;
   dmUnreadCount?: number;
+  onNotificationsClick?: () => void;
+  notifUnreadCount?: number;
   isDark?: boolean;
   onThemeToggle?: () => void;
 }
 
-export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, dmUnreadCount, isDark, onThemeToggle }: Props) {
+export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, dmUnreadCount, onNotificationsClick, notifUnreadCount, isDark, onThemeToggle }: Props) {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const [showAuth, setShowAuth] = useState(false);
@@ -202,13 +204,26 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
             {user && (
               <button
                 className="navbar__dm-btn"
+                onClick={onNotificationsClick}
+                aria-label={t('nav.notifications')}
+                title={t('nav.notifications')}
+              >
+                <BellIcon />
+                {(notifUnreadCount ?? 0) > 0 && (
+                  <span className="navbar__dm-badge">{notifUnreadCount! > 99 ? '99+' : notifUnreadCount}</span>
+                )}
+              </button>
+            )}
+            {user && (
+              <button
+                className="navbar__dm-btn"
                 onClick={onDMClick}
                 aria-label={t('nav.messages')}
                 title={t('nav.messages')}
               >
                 <MessageIcon />
                 {(dmUnreadCount ?? 0) > 0 && (
-                  <span className="navbar__dm-badge">{dmUnreadCount}</span>
+                  <span className="navbar__dm-badge">{dmUnreadCount! > 99 ? '99+' : dmUnreadCount}</span>
                 )}
               </button>
             )}
@@ -279,6 +294,14 @@ function MessageIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+function BellIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
     </svg>
   );
 }

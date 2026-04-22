@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from './useTheme';
 import { Navbar } from './components/Navbar';
 import { PostComposer } from './components/PostComposer';
+import type { ComposerSubmit } from './components/PostComposer';
 import { PostCard } from './components/PostCard';
 import { MapPanel } from './components/MapPanel';
 import { ProfileModal } from './components/ProfileModal';
 import { CategoryNav } from './components/CategoryNav';
 import { DMModal } from './components/DMModal';
+import { NotificationsModal } from './components/NotificationsModal';
 import { API_BASE } from './config';
 import { useAuth } from './AuthContext';
 import type { Post } from './types';
@@ -63,6 +65,38 @@ function NearbyCitiesBox({
 
 const DEFAULT_COORDS = { lat: 37.5665, lng: 126.978 };
 
+function FeedSkeleton({ count = 6 }: { count?: number }) {
+  return (
+    <div className="feed-grid" aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="post-card-skeleton" style={{ animationDelay: `${i * 60}ms` }}>
+          <div className="skeleton post-card-skeleton__media" />
+          <div className="post-card-skeleton__body">
+            <div className="skeleton post-card-skeleton__line" style={{ width: '45%', height: 10 }} />
+            <div className="skeleton post-card-skeleton__line" style={{ width: '90%' }} />
+            <div className="skeleton post-card-skeleton__line" style={{ width: '70%' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div className="feed__state">
+      <div className="feed__state-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </div>
+      <div className="feed__state-title">{title}</div>
+      {sub && <div className="feed__state-sub">{sub}</div>}
+    </div>
+  );
+}
+
 export default function App() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -79,10 +113,20 @@ export default function App() {
   // Category filter
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
+  // Marketplace mode
+  const [marketplaceMode, setMarketplaceMode] = useState(false);
+  const [marketPosts, setMarketPosts] = useState<Post[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+
   // DM modal
   const [showDM, setShowDM] = useState(false);
   const [dmTargetUserId, setDmTargetUserId] = useState<number | null>(null);
+  const [dmInitialText, setDmInitialText] = useState<string | null>(null);
   const [dmUnread, setDmUnread] = useState(0);
+
+  // Notifications
+  const [showNotifs, setShowNotifs] = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
 
   // Text search
   const [searchQuery, setSearchQuery] = useState('');
@@ -119,6 +163,21 @@ export default function App() {
       console.error('Failed to fetch feed:', err);
     } finally {
       setLoading(false);
+    }
+  }, [user]);
+
+  const fetchMarketplace = useCallback(async (lat: number, lng: number, cat: string | null = null) => {
+    setMarketLoading(true);
+    try {
+      const headers: Record<string, string> = user ? { Authorization: `Bearer ${user.token}` } : {};
+      const catParam = cat ? `&category=${cat}` : '';
+      const res = await fetch(`${API_BASE}/marketplace/?lat=${lat}&lng=${lng}${catParam}`, { headers });
+      const data = await res.json();
+      setMarketPosts(data.posts ?? []);
+    } catch (err) {
+      console.error('Marketplace fetch failed:', err);
+    } finally {
+      setMarketLoading(false);
     }
   }, [user]);
 
@@ -192,11 +251,17 @@ export default function App() {
       .catch(() => {});
   }, [userCoords]);
 
-  // Normal feed — only when not in search/location mode
+  // Normal feed — only when not in search/location/marketplace mode
   useEffect(() => {
-    if (searchQuery || locationFilter) return;
+    if (searchQuery || locationFilter || marketplaceMode) return;
     fetchFeed(coords.lat, coords.lng, feedTab, categoryFilter);
-  }, [coords.lat, coords.lng, fetchFeed, feedTab, searchQuery, locationFilter, categoryFilter]);
+  }, [coords.lat, coords.lng, fetchFeed, feedTab, searchQuery, locationFilter, categoryFilter, marketplaceMode]);
+
+  // Marketplace feed
+  useEffect(() => {
+    if (!marketplaceMode) return;
+    fetchMarketplace(coords.lat, coords.lng, categoryFilter);
+  }, [marketplaceMode, coords.lat, coords.lng, categoryFilter, fetchMarketplace]);
 
   // Poll DM unread count
   useEffect(() => {
@@ -213,8 +278,24 @@ export default function App() {
     return () => clearInterval(id);
   }, [user]);
 
+  // Poll notification unread count
+  useEffect(() => {
+    if (!user) { setNotifUnread(0); return; }
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/notifications/unread-count`, { headers: authHeader() });
+        const data = await res.json();
+        setNotifUnread(data.unread_count ?? 0);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => clearInterval(id);
+  }, [user]);
+
   const refreshFeed = () => {
-    if (searchQuery) void handleSearch(searchQuery);
+    if (marketplaceMode) void fetchMarketplace(coords.lat, coords.lng, categoryFilter);
+    else if (searchQuery) void handleSearch(searchQuery);
     else if (locationFilter) void fetchLocationPosts(locationFilter.id, categoryFilter);
     else fetchFeed(coords.lat, coords.lng, feedTab, categoryFilter);
   };
@@ -249,22 +330,40 @@ export default function App() {
     // Re-fetch with new category — useEffect handles normal feed; manually handle special modes
     if (searchQuery) void handleSearch(searchQuery);
     else if (locationFilter) void fetchLocationPosts(locationFilter.id, cat);
-    // else: normal feed useEffect will fire due to categoryFilter change
+    // else: normal feed / marketplace useEffect will fire due to categoryFilter change
   };
 
-  const handlePost = async (content: string, files: File[], locationId: number, category: string | null) => {
+  const handleMarketplaceToggle = () => {
+    setMarketplaceMode((v) => !v);
+    setSearchQuery('');
+    setSearchPosts([]);
+    setLocationFilter(null);
+    setNearbyCities([]);
+  };
+
+  const handlePost = async (data: ComposerSubmit) => {
     let media: { url: string; media_type: string }[] = [];
-    if (files.length > 0) {
+    if (data.files.length > 0) {
       const form = new FormData();
-      files.forEach((f) => form.append('files', f));
+      data.files.forEach((f) => form.append('files', f));
       const res = await fetch(`${API_BASE}/upload/`, { method: 'POST', headers: authHeader(), body: form });
       media = (await res.json()).media;
     }
     await fetch(`${API_BASE}/posts/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ content, location_id: locationId, media, category }),
+      body: JSON.stringify({
+        content: data.content,
+        location_id: data.locationId,
+        media,
+        category: data.category,
+        is_marketplace: data.isMarketplace,
+        price: data.price,
+        currency: 'KRW',
+      }),
     });
+    // After posting a marketplace item, jump user to the marketplace tab
+    if (data.isMarketplace && !marketplaceMode) setMarketplaceMode(true);
     refreshFeed();
   };
 
@@ -313,15 +412,17 @@ export default function App() {
     } catch { refreshFeed(); }
   };
 
-  const openDM = (targetUserId?: number) => {
+  const openDM = (targetUserId?: number, initialText?: string) => {
     setDmTargetUserId(targetUserId ?? null);
+    setDmInitialText(initialText ?? null);
     setShowDM(true);
   };
 
-  const isSearchMode = searchQuery !== '';
-  const isLocationMode = !isSearchMode && locationFilter !== null;
-  const displayPosts = isSearchMode ? searchPosts : posts;
-  const displayLoading = isSearchMode ? searchLoading : loading;
+  const isMarketMode = marketplaceMode;
+  const isSearchMode = !isMarketMode && searchQuery !== '';
+  const isLocationMode = !isMarketMode && !isSearchMode && locationFilter !== null;
+  const displayPosts = isMarketMode ? marketPosts : isSearchMode ? searchPosts : posts;
+  const displayLoading = isMarketMode ? marketLoading : isSearchMode ? searchLoading : loading;
 
   return (
     <>
@@ -331,14 +432,21 @@ export default function App() {
         onLocationSelect={(id, name, lat, lng) => handleSearchSelect(id, name, lat, lng)}
         onDMClick={() => openDM()}
         dmUnreadCount={dmUnread}
+        onNotificationsClick={() => setShowNotifs(true)}
+        notifUnreadCount={notifUnread}
         isDark={theme === 'dark'}
         onThemeToggle={toggleTheme}
       />
       <div className="layout">
-        <CategoryNav selected={categoryFilter} onSelect={handleCategorySelect} />
+        <CategoryNav
+          selected={categoryFilter}
+          onSelect={handleCategorySelect}
+          marketplaceActive={marketplaceMode}
+          onMarketplaceToggle={handleMarketplaceToggle}
+        />
 
         <main className="feed">
-          {!isSearchMode && !isLocationMode && user && (
+          {!isSearchMode && !isLocationMode && !isMarketMode && user && (
             <div className="feed-tabs">
               <button
                 className={`feed-tab${feedTab === 'discover' ? ' feed-tab--active' : ''}`}
@@ -348,6 +456,16 @@ export default function App() {
                 className={`feed-tab${feedTab === 'following' ? ' feed-tab--active' : ''}`}
                 onClick={() => setFeedTab('following')}
               >{t('feed.following')}</button>
+            </div>
+          )}
+
+          {isMarketMode && (
+            <div className="market-header">
+              <div className="market-header__icon">🛍️</div>
+              <div>
+                <div className="market-header__title">{t('market.title')}</div>
+                <div className="market-header__sub">{t('market.subtitle')}</div>
+              </div>
             </div>
           )}
 
@@ -364,7 +482,11 @@ export default function App() {
 
           {!isSearchMode && !isLocationMode && (
             user ? (
-              <PostComposer fallbackLocationId={defaultLocationId} onSubmit={handlePost} />
+              <PostComposer
+                fallbackLocationId={defaultLocationId}
+                defaultMarketplace={isMarketMode}
+                onSubmit={handlePost}
+              />
             ) : (
               <div className="feed__login-prompt">
                 {t('feed.login_required')}
@@ -373,12 +495,15 @@ export default function App() {
           )}
 
           {displayLoading ? (
-            <p className="feed__state">{t('feed.loading')}</p>
+            <FeedSkeleton count={6} />
           ) : displayPosts.length === 0 ? (
             <>
-              <p className="feed__state">
-                {isSearchMode ? t('feed.no_results') : isLocationMode ? t('feed.no_location_posts') : t('feed.no_posts')}
-              </p>
+              <EmptyState
+                title={isMarketMode ? t('market.empty')
+                  : isSearchMode ? t('feed.no_results')
+                  : isLocationMode ? t('feed.no_location_posts')
+                  : t('feed.no_posts')}
+              />
               {isLocationMode && nearbyCities.length > 0 && (
                 <NearbyCitiesBox
                   cities={nearbyCities}
@@ -388,7 +513,7 @@ export default function App() {
             </>
           ) : (
             <>
-              <div className="feed-grid">
+              <div className={`feed-grid${isMarketMode ? ' feed-grid--market' : ''}`}>
                 {displayPosts.map((post) => (
                   <PostCard
                     key={post.id}
@@ -397,6 +522,7 @@ export default function App() {
                     onDelete={handleDelete}
                     onEdit={handleEdit}
                     onProfileClick={(uid) => setProfileUserId(uid)}
+                    onOffer={(uid, text) => openDM(uid, text)}
                   />
                 ))}
               </div>
@@ -430,8 +556,17 @@ export default function App() {
 
       {showDM && (
         <DMModal
-          onClose={() => { setShowDM(false); setDmTargetUserId(null); }}
+          onClose={() => { setShowDM(false); setDmTargetUserId(null); setDmInitialText(null); }}
           initialUserId={dmTargetUserId}
+          initialText={dmInitialText}
+        />
+      )}
+
+      {showNotifs && (
+        <NotificationsModal
+          onClose={() => setShowNotifs(false)}
+          onProfileOpen={(uid) => setProfileUserId(uid)}
+          onRead={() => setNotifUnread(0)}
         />
       )}
     </>

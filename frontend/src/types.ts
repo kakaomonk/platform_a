@@ -17,6 +17,10 @@ export interface Post {
   like_count: number;
   comment_count: number;
   is_liked: boolean;
+  is_marketplace?: boolean;
+  price?: number | null;
+  currency?: string | null;
+  sold?: boolean;
 }
 
 export interface Comment {

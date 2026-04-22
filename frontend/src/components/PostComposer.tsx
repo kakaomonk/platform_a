@@ -14,12 +14,22 @@ interface PreviewItem {
   mediaType: 'image' | 'video';
 }
 
-interface Props {
-  fallbackLocationId: number;
-  onSubmit: (content: string, files: File[], locationId: number, category: string | null) => Promise<void>;
+export interface ComposerSubmit {
+  content: string;
+  files: File[];
+  locationId: number;
+  category: string | null;
+  isMarketplace: boolean;
+  price: number | null;
 }
 
-export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
+interface Props {
+  fallbackLocationId: number;
+  defaultMarketplace?: boolean;
+  onSubmit: (data: ComposerSubmit) => Promise<void>;
+}
+
+export function PostComposer({ fallbackLocationId, defaultMarketplace = false, onSubmit }: Props) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const [content, setContent] = useState('');
@@ -29,6 +39,8 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
   const [category, setCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isMarketplace, setIsMarketplace] = useState(defaultMarketplace);
+  const [priceText, setPriceText] = useState('');
 
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -57,20 +69,39 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
 
   const handleSubmit = async () => {
     if (!content.trim() && !previews.length) return;
+    let price: number | null = null;
+    if (isMarketplace && priceText.trim()) {
+      const parsed = parseInt(priceText.replace(/[^0-9]/g, ''), 10);
+      if (Number.isFinite(parsed) && parsed >= 0) price = parsed;
+    }
     setSubmitting(true);
     try {
-      await onSubmit(content, previews.map((p) => p.file), location?.id ?? fallbackLocationId, category);
+      await onSubmit({
+        content,
+        files: previews.map((p) => p.file),
+        locationId: location?.id ?? fallbackLocationId,
+        category,
+        isMarketplace,
+        price,
+      });
       setContent('');
       setLocation(null);
       setLocResetKey((k) => k + 1);
       setCategory(null);
       setShowCategories(false);
+      setPriceText('');
       previews.forEach((p) => URL.revokeObjectURL(p.previewUrl));
       setPreviews([]);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const formatPriceInput = (v: string) => {
+    const digits = v.replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    return Number(digits).toLocaleString();
   };
 
   const selectedCat = CATEGORIES.find((c) => c.id === category);
@@ -130,6 +161,23 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
           </div>
         )}
 
+        {isMarketplace && (
+          <div className="composer__price-row">
+            <span className="composer__price-currency">₩</span>
+            <input
+              type="text"
+              className="composer__price-input"
+              placeholder={t('market.price_placeholder')}
+              value={priceText}
+              onChange={(e) => setPriceText(formatPriceInput(e.target.value))}
+              inputMode="numeric"
+            />
+            {priceText && (
+              <button className="composer__price-clear" onClick={() => setPriceText('')} type="button">×</button>
+            )}
+          </div>
+        )}
+
         <div className="composer__footer">
           <button className="composer__img-btn" onClick={() => fileRef.current?.click()} title={t('composer.attach_media')}>
             <ImageIcon />
@@ -145,11 +193,25 @@ export function PostComposer({ fallbackLocationId, onSubmit }: Props) {
               <TagIcon />
             )}
           </button>
+          <button
+            className={`composer__img-btn composer__sell-btn${isMarketplace ? ' composer__sell-btn--active' : ''}`}
+            onClick={() => setIsMarketplace((v) => !v)}
+            title={t('market.sell_toggle')}
+            type="button"
+          >
+            <TagPriceIcon />
+          </button>
           <input ref={fileRef} type="file" accept="image/*,video/*" multiple hidden onChange={addFiles} />
           {selectedCat && (
             <span className="composer__cat-badge">
               {selectedCat.emoji} {t(`cat.${selectedCat.id}`)}
               <button onClick={() => setCategory(null)} aria-label={t('composer.clear_category')}>×</button>
+            </span>
+          )}
+          {isMarketplace && (
+            <span className="composer__cat-badge composer__cat-badge--market">
+              🛍️ {t('market.sell_toggle')}
+              <button onClick={() => { setIsMarketplace(false); setPriceText(''); }} type="button">×</button>
             </span>
           )}
           <button
@@ -188,4 +250,11 @@ function PlusIcon() {
 }
 function PlayIcon() {
   return <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3" /></svg>;
+}
+function TagPriceIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  );
 }

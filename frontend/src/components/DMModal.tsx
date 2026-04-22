@@ -25,9 +25,10 @@ interface Message {
 interface Props {
   onClose: () => void;
   initialUserId?: number | null;
+  initialText?: string | null;
 }
 
-export function DMModal({ onClose, initialUserId }: Props) {
+export function DMModal({ onClose, initialUserId, initialText }: Props) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -84,10 +85,11 @@ export function DMModal({ onClose, initialUserId }: Props) {
         if (found) {
           setConvs(convData.conversations ?? []);
           openConv(found.id, found.other_user);
+          if (initialText) setDraft(initialText);
         }
       } catch { /* ignore */ }
     })();
-  }, [initialUserId, user]);
+  }, [initialUserId, user, initialText]);
 
   useEffect(() => {
     if (!activeConvId) return;

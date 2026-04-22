@@ -1,6 +1,7 @@
 import asyncio
 import math
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -20,7 +21,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload, contains_eager
 
 from database import get_db
-from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment, Follow, Conversation, DirectMessage  # noqa: F401
+from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment, Follow, Conversation, DirectMessage, Notification  # noqa: F401
 from auth import hash_password, verify_password, create_token, get_optional_user, require_user
 from storage import save_file, delete_file
 
@@ -43,6 +44,71 @@ app.add_middleware(
 )
 
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
+
+MENTION_RE = re.compile(r"@([A-Za-z0-9_]{2,32})")
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "platform_a"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ── Notification helpers ─────────────────────────────────────────────────────
+
+def _add_notification(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    actor_id: int,
+    type: str,
+    post_id: Optional[int] = None,
+    comment_id: Optional[int] = None,
+) -> None:
+    """Enqueue a notification row if not self-triggered. Caller must commit."""
+    if user_id == actor_id:
+        return
+    db.add(Notification(
+        user_id=user_id,
+        actor_id=actor_id,
+        type=type,
+        post_id=post_id,
+        comment_id=comment_id,
+    ))
+
+
+async def _notify_mentions(
+    db: AsyncSession,
+    content: str,
+    actor_id: int,
+    notif_type: str,
+    *,
+    post_id: Optional[int] = None,
+    comment_id: Optional[int] = None,
+    skip_user_ids: Optional[set] = None,
+) -> None:
+    """Extract @usernames from content, resolve to users, create notifications."""
+    usernames = {m.lower() for m in MENTION_RE.findall(content or "")}
+    if not usernames:
+        return
+    skip = skip_user_ids or set()
+    result = await db.execute(
+        select(User).where(func.lower(User.username).in_(usernames))
+    )
+    for u in result.scalars().all():
+        if u.id == actor_id or u.id in skip:
+            continue
+        db.add(Notification(
+            user_id=u.id,
+            actor_id=actor_id,
+            type=notif_type,
+            post_id=post_id,
+            comment_id=comment_id,
+        ))
 
 
 def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -246,12 +312,17 @@ class PostCreate(BaseModel):
     location_id: int
     media: List[MediaItemIn] = []
     category: Optional[str] = None
+    is_marketplace: bool = False
+    price: Optional[int] = None
+    currency: Optional[str] = "KRW"
 
 
 class PostUpdate(BaseModel):
     content: Optional[str] = None
     location_id: Optional[int] = None
     category: Optional[str] = None
+    price: Optional[int] = None
+    sold: Optional[bool] = None
 
 
 @app.post("/posts/", status_code=status.HTTP_201_CREATED)
@@ -260,11 +331,23 @@ async def create_post(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    post = Post(user_id=current_user.id, content=payload.content, location_id=payload.location_id, category=payload.category)
+    price = payload.price if payload.is_marketplace else None
+    if price is not None and price < 0:
+        raise HTTPException(status_code=422, detail="Price must be non-negative")
+    post = Post(
+        user_id=current_user.id,
+        content=payload.content,
+        location_id=payload.location_id,
+        category=payload.category,
+        is_marketplace=payload.is_marketplace,
+        price=price,
+        currency=(payload.currency or "KRW") if payload.is_marketplace else None,
+    )
     db.add(post)
     await db.flush()
     for i, item in enumerate(payload.media):
         db.add(PostMedia(post_id=post.id, media_url=item.url, media_type=item.media_type, order=i))
+    await _notify_mentions(db, payload.content, current_user.id, "mention_post", post_id=post.id)
     await db.commit()
     return {"status": "success", "post_id": post.id}
 
@@ -287,31 +370,35 @@ async def update_post(
     if payload.category is not None:
         new_category = payload.category if payload.category != "" else None
 
-    from sqlalchemy import text as sa_text
-    await db.execute(sa_text("""
-        UPDATE posts SET
-            content   = COALESCE(:content,   content),
-            location_id = COALESCE(:loc_id, location_id),
-            category  = :category
-        WHERE id = :post_id AND user_id = :user_id
-    """), {
-        "content":  payload.content,
-        "loc_id":   payload.location_id,
-        "category": new_category,
-        "post_id":  post_id,
-        "user_id":  current_user.id,
-    })
+    if payload.content is not None:
+        post.content = payload.content
+    if payload.location_id is not None:
+        post.location_id = payload.location_id
+    if payload.category is not None:
+        post.category = new_category
+    if payload.price is not None and post.is_marketplace:
+        if payload.price < 0:
+            raise HTTPException(status_code=422, detail="Price must be non-negative")
+        post.price = payload.price
+    if payload.sold is not None and post.is_marketplace:
+        post.sold = payload.sold
     await db.commit()
+    await db.refresh(post)
 
     result2 = await db.execute(
-        select(Post).where(Post.id == post_id)
-        .options(joinedload(Post.location))
-        .execution_options(populate_existing=True)
+        select(Post).where(Post.id == post_id).options(joinedload(Post.location))
     )
     post = result2.scalar_one()
     loc_name = post.location.name if post.location else None
 
-    return {"status": "success", "content": post.content, "location_name": loc_name, "category": post.category}
+    return {
+        "status": "success",
+        "content": post.content,
+        "location_name": loc_name,
+        "category": post.category,
+        "price": post.price,
+        "sold": post.sold,
+    }
 
 
 @app.delete("/posts/{post_id}")
@@ -350,7 +437,7 @@ async def search_posts(
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     limit = min(limit, 50)
-    q = select(Post).where(Post.location_id == location_id)
+    q = select(Post).where(Post.location_id == location_id, Post.is_marketplace.is_(False))
     if category:
         q = q.where(Post.category == category)
     q = q.options(
@@ -381,6 +468,10 @@ async def search_posts(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_marketplace": bool(p.is_marketplace),
+            "price": p.price,
+            "currency": p.currency,
+            "sold": bool(p.sold),
         }
 
     return {"location_id": location_id, "posts": [serialize(p) for p in posts]}
@@ -402,7 +493,10 @@ async def text_search_posts(
         return {"posts": [], "total": 0, "query": q}
     limit = min(limit, 50)
 
-    filters = [or_(Post.content.ilike(f"%{q}%"), Location.name.ilike(f"%{q}%"))]
+    filters = [
+        Post.is_marketplace.is_(False),
+        or_(Post.content.ilike(f"%{q}%"), Location.name.ilike(f"%{q}%")),
+    ]
     if category:
         filters.append(Post.category == category)
 
@@ -462,6 +556,10 @@ async def text_search_posts(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_marketplace": bool(p.is_marketplace),
+            "price": p.price,
+            "currency": p.currency,
+            "sold": bool(p.sold),
         }
 
     return {"posts": [serialize(p) for p in page], "total": total, "query": q}
@@ -526,13 +624,14 @@ async def proximity_feed(
         select(Post)
         .join(Post.location)
         .where(
+            Post.is_marketplace.is_(False),
             or_(
                 Location.latitude.is_(None),
                 and_(
                     Location.latitude.between(lat - LAT_DELTA, lat + LAT_DELTA),
                     Location.longitude.between(lng - lng_delta, lng + lng_delta),
                 ),
-            )
+            ),
         )
         .options(selectinload(Post.media), contains_eager(Post.location), joinedload(Post.user))
     )
@@ -598,6 +697,10 @@ async def proximity_feed(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_marketplace": bool(p.is_marketplace),
+            "price": p.price,
+            "currency": p.currency,
+            "sold": bool(p.sold),
         }
 
     return {"posts": [serialize(p) for p in page], "total": len(posts_sorted)}
@@ -650,6 +753,12 @@ async def like_post(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Already liked")
     db.add(Like(user_id=current_user.id, post_id=post_id))
+
+    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
+    owner_id = post_res.scalar_one_or_none()
+    if owner_id is not None:
+        _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="like", post_id=post_id)
+
     await db.commit()
     count = await db.execute(select(func.count(Like.id)).where(Like.post_id == post_id))
     return {"status": "liked", "like_count": count.scalar()}
@@ -668,6 +777,15 @@ async def unlike_post(
     if not like:
         raise HTTPException(status_code=404, detail="Not liked")
     await db.delete(like)
+    # Remove any unread like notification from this actor for this post
+    await db.execute(
+        Notification.__table__.delete().where(
+            Notification.actor_id == current_user.id,
+            Notification.post_id == post_id,
+            Notification.type == "like",
+            Notification.is_read.is_(False),
+        )
+    )
     await db.commit()
     count = await db.execute(select(func.count(Like.id)).where(Like.post_id == post_id))
     return {"status": "unliked", "like_count": count.scalar()}
@@ -712,8 +830,24 @@ async def create_comment(
 ):
     if not payload.content.strip():
         raise HTTPException(status_code=422, detail="Comment cannot be empty")
-    comment = Comment(user_id=current_user.id, post_id=post_id, content=payload.content.strip())
+    content = payload.content.strip()
+    comment = Comment(user_id=current_user.id, post_id=post_id, content=content)
     db.add(comment)
+    await db.flush()
+
+    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
+    owner_id = post_res.scalar_one_or_none()
+    skip_ids = {current_user.id}
+    if owner_id is not None:
+        _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="comment",
+                          post_id=post_id, comment_id=comment.id)
+        skip_ids.add(owner_id)
+
+    await _notify_mentions(
+        db, content, current_user.id, "mention_comment",
+        post_id=post_id, comment_id=comment.id, skip_user_ids=skip_ids,
+    )
+
     await db.commit()
     await db.refresh(comment)
     return {
@@ -834,6 +968,7 @@ async def follow_user(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Already following")
     db.add(Follow(follower_id=current_user.id, following_id=user_id))
+    _add_notification(db, user_id=user_id, actor_id=current_user.id, type="follow")
     await db.commit()
     count = await db.execute(select(func.count(Follow.id)).where(Follow.following_id == user_id))
     return {"status": "following", "follower_count": count.scalar()}
@@ -852,6 +987,14 @@ async def unfollow_user(
     if not follow:
         raise HTTPException(status_code=404, detail="Not following")
     await db.delete(follow)
+    await db.execute(
+        Notification.__table__.delete().where(
+            Notification.actor_id == current_user.id,
+            Notification.user_id == user_id,
+            Notification.type == "follow",
+            Notification.is_read.is_(False),
+        )
+    )
     await db.commit()
     count = await db.execute(select(func.count(Follow.id)).where(Follow.following_id == user_id))
     return {"status": "unfollowed", "follower_count": count.scalar()}
@@ -874,7 +1017,7 @@ async def following_feed(
     if not following_ids:
         return {"posts": [], "total": 0}
 
-    where_clauses = [Post.user_id.in_(following_ids)]
+    where_clauses = [Post.user_id.in_(following_ids), Post.is_marketplace.is_(False)]
     if category:
         where_clauses.append(Post.category == category)
 
@@ -915,6 +1058,10 @@ async def following_feed(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_marketplace": bool(p.is_marketplace),
+            "price": p.price,
+            "currency": p.currency,
+            "sold": bool(p.sold),
         }
 
     return {"posts": [serialize(p) for p in posts], "total": total}
@@ -1165,3 +1312,186 @@ async def unread_dm_count(
         )
     )
     return {"unread_count": result.scalar() or 0}
+
+
+# ── Marketplace ──────────────────────────────────────────────────────────────
+
+@app.get("/marketplace/")
+async def marketplace_feed(
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    limit: int = 30,
+    offset: int = 0,
+    category: Optional[str] = None,
+    include_sold: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    limit = min(max(limit, 1), 60)
+
+    filters = [Post.is_marketplace.is_(True)]
+    if not include_sold:
+        filters.append(Post.sold.is_(False))
+    if category:
+        filters.append(Post.category == category)
+
+    total_res = await db.execute(select(func.count(Post.id)).where(*filters))
+    total = total_res.scalar() or 0
+
+    result = await db.execute(
+        select(Post)
+        .where(*filters)
+        .options(selectinload(Post.media), joinedload(Post.location), joinedload(Post.user))
+        .order_by(Post.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    posts = result.scalars().unique().all()
+
+    like_set = await _user_like_set(db, current_user, [p.id for p in posts])
+    like_counts = await _like_counts(db, [p.id for p in posts])
+    comment_counts = await _comment_counts(db, [p.id for p in posts])
+
+    def serialize(p: Post) -> dict:
+        media = [{"url": m.media_url, "media_type": m.media_type} for m in p.media]
+        if not media and p.image_url:
+            media = [{"url": p.image_url, "media_type": "image"}]
+        dist_km = None
+        if lat is not None and lng is not None and p.location and p.location.coordinates:
+            c = _parse_coords(p.location.coordinates)
+            if c:
+                dist_km = round(_haversine(lat, lng, c[0], c[1]), 1)
+        return {
+            "id": p.id,
+            "content": p.content,
+            "user_id": p.user_id,
+            "username": p.user.username if p.user else f"user_{p.user_id}",
+            "avatar_url": p.user.avatar_url if p.user else None,
+            "location_name": p.location.name if p.location else None,
+            "location_id": p.location_id,
+            "distance_km": dist_km,
+            "category": p.category,
+            "media": media,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "like_count": like_counts.get(p.id, 0),
+            "comment_count": comment_counts.get(p.id, 0),
+            "is_liked": p.id in like_set,
+            "is_marketplace": True,
+            "price": p.price,
+            "currency": p.currency or "KRW",
+            "sold": bool(p.sold),
+        }
+
+    return {"posts": [serialize(p) for p in posts], "total": total}
+
+
+# ── Notifications ────────────────────────────────────────────────────────────
+
+@app.get("/notifications/")
+async def list_notifications(
+    limit: int = 30,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    limit = min(max(limit, 1), 100)
+    result = await db.execute(
+        select(Notification)
+        .where(Notification.user_id == current_user.id)
+        .options(
+            joinedload(Notification.actor),
+            selectinload(Notification.post).selectinload(Post.media),
+            joinedload(Notification.comment),
+        )
+        .order_by(Notification.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    notifs = result.scalars().unique().all()
+
+    total_res = await db.execute(
+        select(func.count(Notification.id)).where(Notification.user_id == current_user.id)
+    )
+    total = total_res.scalar() or 0
+
+    out = []
+    for n in notifs:
+        actor = n.actor
+        thumb = None
+        if n.post and n.post.media:
+            thumb = n.post.media[0].media_url
+        out.append({
+            "id": n.id,
+            "type": n.type,
+            "is_read": n.is_read,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+            "actor": {
+                "id": actor.id,
+                "username": actor.username,
+                "avatar_url": actor.avatar_url,
+            } if actor else None,
+            "post_id": n.post_id,
+            "post_thumb": thumb,
+            "comment_id": n.comment_id,
+            "comment_preview": (n.comment.content[:80] if n.comment and n.comment.content else None),
+        })
+    return {"notifications": out, "total": total}
+
+
+@app.get("/notifications/unread-count")
+async def notifications_unread_count(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    result = await db.execute(
+        select(func.count(Notification.id)).where(
+            Notification.user_id == current_user.id,
+            Notification.is_read.is_(False),
+        )
+    )
+    return {"unread_count": result.scalar() or 0}
+
+
+@app.post("/notifications/mark-all-read")
+async def mark_all_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    await db.execute(
+        sa_update(Notification)
+        .where(Notification.user_id == current_user.id, Notification.is_read.is_(False))
+        .values(is_read=True)
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
+@app.post("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    result = await db.execute(select(Notification).where(Notification.id == notification_id))
+    notif = result.scalar_one_or_none()
+    if not notif or notif.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not notif.is_read:
+        notif.is_read = True
+        await db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/notifications/{notification_id}")
+async def delete_notification(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    result = await db.execute(select(Notification).where(Notification.id == notification_id))
+    notif = result.scalar_one_or_none()
+    if not notif or notif.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.delete(notif)
+    await db.commit()
+    return {"status": "ok"}

@@ -37,6 +37,10 @@ class Post(Base):
     location_id = Column(Integer, ForeignKey("locations.id"))
     location_coords = Column(String(50))
     category = Column(String(50), nullable=True)
+    is_marketplace = Column(Boolean, default=False, nullable=False, server_default="false")
+    price = Column(Integer, nullable=True)  # KRW, nullable even for marketplace (price-on-request)
+    currency = Column(String(3), nullable=True, default="KRW")
+    sold = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User")
@@ -135,3 +139,20 @@ class DirectMessage(Base):
 
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_id])
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(30), nullable=False)  # follow | like | comment | mention_post | mention_comment
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=True)
+    comment_id = Column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
+    is_read = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    actor = relationship("User", foreign_keys=[actor_id])
+    post = relationship("Post", foreign_keys=[post_id])
+    comment = relationship("Comment", foreign_keys=[comment_id])

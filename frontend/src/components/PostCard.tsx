@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import type { Post, MediaItem, Comment } from '../types';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
@@ -39,9 +40,19 @@ interface Props {
   onDelete: (id: number) => void;
   onEdit: (id: number, changes: EditChanges) => Promise<void>;
   onProfileClick?: (userId: number) => void;
+  onOffer?: (targetUserId: number, initialText: string) => void;
 }
 
-export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick }: Props) {
+function formatPrice(price: number | null | undefined, currency: string | null | undefined, t: TFunction): string {
+  if (price == null) return '';
+  if (price === 0) return t('market.price_free');
+  const cur = currency || 'KRW';
+  if (cur === 'KRW') return `₩${price.toLocaleString()}`;
+  if (cur === 'USD') return `$${price.toLocaleString()}`;
+  return `${price.toLocaleString()} ${cur}`;
+}
+
+export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick, onOffer }: Props) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -56,6 +67,9 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
   const [liked, setLiked] = useState(post.is_liked);
   const [likeCount, setLikeCount] = useState(post.like_count);
   const [likeLoading, setLikeLoading] = useState(false);
+
+  const [showOfferInput, setShowOfferInput] = useState(false);
+  const [offerAmount, setOfferAmount] = useState('');
 
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -194,10 +208,41 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
 
   const catInfo = CATEGORIES.find((c) => c.id === post.category);
 
+  const isMarket = !!post.is_marketplace;
+  const priceLabel = isMarket ? formatPrice(post.price, post.currency, t) : '';
+
+  const handleSendOffer = () => {
+    if (!onOffer || isOwner) return;
+    const digits = offerAmount.replace(/[^0-9]/g, '');
+    if (digits) {
+      const n = Number(digits);
+      const offerPrice = formatPrice(n, post.currency || 'KRW', t);
+      onOffer(post.user_id, t('market.offer_template_buy', { price: offerPrice }));
+    } else {
+      onOffer(post.user_id, t('market.offer_template_ask'));
+    }
+    setShowOfferInput(false);
+    setOfferAmount('');
+  };
+
   return (
-    <article className="post-card">
-      <Carousel media={post.media} t={t} />
+    <article className={`post-card${isMarket ? ' post-card--market' : ''}${post.sold ? ' post-card--sold' : ''}`}>
+      <div className="post-card__media-wrap">
+        <Carousel media={post.media} t={t} />
+        {isMarket && post.sold && (
+          <div className="post-card__sold-overlay">
+            <span>{t('market.sold')}</span>
+          </div>
+        )}
+      </div>
       <div className="post-card__body">
+        {isMarket && (
+          <div className="post-card__price-row">
+            <span className="post-card__price">{priceLabel || t('market.price_label')}</span>
+            {post.sold && <span className="post-card__sold-tag">{t('market.sold')}</span>}
+          </div>
+        )}
+
         {(post.location_name || post.distance_km != null) && !editing && (
           <div className="post-card__location">
             <PinIcon />
@@ -260,6 +305,46 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
             {!isOwner && <button className="action-btn" aria-label={t('post.save')}><BookmarkIcon /></button>}
           </div>
         </div>
+
+        {isMarket && !isOwner && user && !post.sold && (
+          <div className="post-card__offer">
+            {showOfferInput ? (
+              <div className="post-card__offer-row">
+                <span className="post-card__offer-currency">₩</span>
+                <input
+                  className="post-card__offer-input"
+                  placeholder={t('market.offer_hint')}
+                  value={offerAmount}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/[^0-9]/g, '');
+                    setOfferAmount(digits ? Number(digits).toLocaleString() : '');
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSendOffer(); if (e.key === 'Escape') setShowOfferInput(false); }}
+                  inputMode="numeric"
+                  autoFocus
+                />
+                <button className="post-card__offer-send" onClick={handleSendOffer}>
+                  {t('market.offer_send')}
+                </button>
+                <button className="post-card__offer-cancel" onClick={() => setShowOfferInput(false)}>
+                  {t('post.cancel')}
+                </button>
+              </div>
+            ) : (
+              <div className="post-card__offer-btns">
+                <button className="post-card__offer-primary" onClick={() => setShowOfferInput(true)}>
+                  <CurrencyIcon /> {t('market.make_offer')}
+                </button>
+                <button
+                  className="post-card__offer-secondary"
+                  onClick={() => onOffer?.(post.user_id, t('market.offer_template_ask'))}
+                >
+                  <MessageIcon /> {t('market.contact_seller')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {editing ? (
           <div className="post-card__edit-wrap">
@@ -376,7 +461,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
 
 // ── Carousel ──────────────────────────────────────────────────────────────────
 
-function Carousel({ media, t }: { media: MediaItem[]; t: (key: string, opts?: object) => string }) {
+function Carousel({ media, t }: { media: MediaItem[]; t: TFunction }) {
   const [index, setIndex] = useState(0);
   const [dragStart, setDragStart] = useState<number | null>(null);
 
@@ -432,6 +517,12 @@ function HeartFilledIcon() {
 }
 function CommentIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
+}
+function MessageIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
+}
+function CurrencyIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>;
 }
 function BookmarkIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>;

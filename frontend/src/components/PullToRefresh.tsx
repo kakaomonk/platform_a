@@ -45,14 +45,21 @@ export function PullToRefresh({ onRefresh, children }: Props) {
   // Touch gesture
   useEffect(() => {
     const onTouchStart = (e: TouchEvent) => {
-      if (!atTop() || refreshing) { touchStartY.current = null; return; }
+      if (refreshing) return;
       touchStartY.current = e.touches[0].clientY;
     };
     const onTouchMove = (e: TouchEvent) => {
       if (touchStartY.current === null || refreshing) return;
-      const delta = e.touches[0].clientY - touchStartY.current;
+      const currentY = e.touches[0].clientY;
+      if (!atTop()) {
+        // Still scrolling content — keep reference point fresh so that the
+        // moment we hit the top, delta starts from zero, not from gesture start.
+        touchStartY.current = currentY;
+        setPull(0);
+        return;
+      }
+      const delta = currentY - touchStartY.current;
       if (delta <= 0) { setPull(0); return; }
-      // Dampened pull (resistance as you pull further)
       const damped = Math.min(MAX_PULL_PX, delta * 0.5);
       setPull(damped);
     };

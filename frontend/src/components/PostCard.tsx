@@ -7,6 +7,7 @@ import type { SelectedLocation } from './LocationSearchInput';
 import { API_BASE } from '../config';
 import { useAuth } from '../AuthContext';
 import { CATEGORIES } from '../categories';
+import { MARKET_CATEGORIES } from '../marketCategories';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
 
@@ -68,6 +69,9 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
   const [likeCount, setLikeCount] = useState(post.like_count);
   const [likeLoading, setLikeLoading] = useState(false);
 
+  const [bookmarked, setBookmarked] = useState(!!post.is_bookmarked);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
+
   const [showOfferInput, setShowOfferInput] = useState(false);
   const [offerAmount, setOfferAmount] = useState('');
 
@@ -81,6 +85,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
 
   useEffect(() => { setEditContent(post.content); }, [post.content]);
   useEffect(() => { setLiked(post.is_liked); setLikeCount(post.like_count); }, [post.is_liked, post.like_count]);
+  useEffect(() => { setBookmarked(!!post.is_bookmarked); }, [post.is_bookmarked]);
   useEffect(() => { setCommentCount(post.comment_count); }, [post.comment_count]);
   useEffect(() => { setEditCategory(post.category ?? null); }, [post.category]);
 
@@ -129,20 +134,47 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
 
   const toggleLike = async () => {
     if (!user || likeLoading) return;
+    const prevLiked = liked;
+    const prevCount = likeCount;
+    setLiked(!prevLiked);
+    setLikeCount(prevCount + (prevLiked ? -1 : 1));
     setLikeLoading(true);
-    const method = liked ? 'DELETE' : 'POST';
     try {
       const res = await fetch(`${API_BASE}/posts/${post.id}/like`, {
-        method,
+        method: prevLiked ? 'DELETE' : 'POST',
         headers: { Authorization: `Bearer ${user.token}` },
       });
       if (res.ok) {
         const data = await res.json();
-        setLiked(!liked);
-        setLikeCount(data.like_count);
+        if (typeof data.like_count === 'number') setLikeCount(data.like_count);
+      } else {
+        setLiked(prevLiked);
+        setLikeCount(prevCount);
       }
-    } catch { /* ignore */ }
-    finally { setLikeLoading(false); }
+    } catch {
+      setLiked(prevLiked);
+      setLikeCount(prevCount);
+    } finally {
+      setLikeLoading(false);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    if (!user || bookmarkLoading) return;
+    const prev = bookmarked;
+    setBookmarked(!prev);
+    setBookmarkLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/posts/${post.id}/bookmark`, {
+        method: prev ? 'DELETE' : 'POST',
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (!res.ok) setBookmarked(prev);
+    } catch {
+      setBookmarked(prev);
+    } finally {
+      setBookmarkLoading(false);
+    }
   };
 
   const loadComments = async () => {
@@ -206,9 +238,12 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     return t('post.days_ago', { n: Math.floor(hrs / 24) });
   }
 
-  const catInfo = CATEGORIES.find((c) => c.id === post.category);
-
   const isMarket = !!post.is_marketplace;
+  const isBuying = isMarket && post.listing_type === 'buy';
+  const catInfo = isMarket
+    ? MARKET_CATEGORIES.find((c) => c.id === post.category)
+    : CATEGORIES.find((c) => c.id === post.category);
+  const catLabelKey = isMarket ? 'mcat' : 'cat';
   const priceLabel = isMarket ? formatPrice(post.price, post.currency, t) : '';
 
   const handleSendOffer = () => {
@@ -238,6 +273,9 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
       <div className="post-card__body">
         {isMarket && (
           <div className="post-card__price-row">
+            <span className={`post-card__type-tag post-card__type-tag--${isBuying ? 'buy' : 'sell'}`}>
+              {isBuying ? '🛒' : '🏷️'} {t(isBuying ? 'market.type_buy_label' : 'market.type_sell_label')}
+            </span>
             <span className="post-card__price">{priceLabel || t('market.price_label')}</span>
             {post.sold && <span className="post-card__sold-tag">{t('market.sold')}</span>}
           </div>
@@ -253,7 +291,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               )}
             </span>
             {catInfo && (
-              <span className="post-card__cat-tag">{catInfo.emoji} {t(`cat.${catInfo.id}`)}</span>
+              <span className="post-card__cat-tag">{catInfo.emoji} {t(`${catLabelKey}.${catInfo.id}`)}</span>
             )}
           </div>
         )}
@@ -288,7 +326,15 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                 </div>
               ) : (
                 <>
-                  <button className="action-btn" aria-label={t('post.save')}><BookmarkIcon /></button>
+                  <button
+                    className={`action-btn${bookmarked ? ' action-btn--bookmarked' : ''}`}
+                    aria-label={t('post.save')}
+                    aria-pressed={bookmarked}
+                    onClick={toggleBookmark}
+                    disabled={!user || bookmarkLoading}
+                  >
+                    {bookmarked ? <BookmarkFilledIcon /> : <BookmarkIcon />}
+                  </button>
                   <button
                     className="action-btn"
                     aria-label={t('post.edit')}
@@ -302,7 +348,17 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
                 </>
               )
             )}
-            {!isOwner && <button className="action-btn" aria-label={t('post.save')}><BookmarkIcon /></button>}
+            {!isOwner && (
+              <button
+                className={`action-btn${bookmarked ? ' action-btn--bookmarked' : ''}`}
+                aria-label={t('post.save')}
+                aria-pressed={bookmarked}
+                onClick={toggleBookmark}
+                disabled={!user || bookmarkLoading}
+              >
+                {bookmarked ? <BookmarkFilledIcon /> : <BookmarkIcon />}
+              </button>
+            )}
           </div>
         </div>
 
@@ -370,7 +426,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
               >
                 <TagIcon />
                 {editCategory
-                  ? `${CATEGORIES.find((c) => c.id === editCategory)?.emoji ?? ''} ${t(`cat.${editCategory}`)}`
+                  ? `${(isMarket ? MARKET_CATEGORIES : CATEGORIES).find((c) => c.id === editCategory)?.emoji ?? ''} ${t(`${catLabelKey}.${editCategory}`)}`
                   : t('post.category')}
               </button>
               {editCategory && (
@@ -379,14 +435,14 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
             </div>
             {showEditCategories && (
               <div className="composer__cat-grid">
-                {CATEGORIES.map((c) => (
+                {(isMarket ? MARKET_CATEGORIES : CATEGORIES).map((c) => (
                   <button
                     key={c.id}
                     className={`composer__cat-chip${editCategory === c.id ? ' composer__cat-chip--active' : ''}`}
                     onClick={() => setEditCategory(editCategory === c.id ? null : c.id)}
                   >
                     <span>{c.emoji}</span>
-                    <span>{t(`cat.${c.id}`)}</span>
+                    <span>{t(`${catLabelKey}.${c.id}`)}</span>
                   </button>
                 ))}
               </div>
@@ -526,6 +582,9 @@ function CurrencyIcon() {
 }
 function BookmarkIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>;
+}
+function BookmarkFilledIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>;
 }
 function PencilIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;

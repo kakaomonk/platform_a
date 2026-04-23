@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LocationSearchInput } from './LocationSearchInput';
 import type { SelectedLocation } from './LocationSearchInput';
 import { useAuth } from '../AuthContext';
 import { CATEGORIES } from '../categories';
+import { MARKET_CATEGORIES } from '../marketCategories';
 
 const AVATAR_PALETTE = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#eab308'];
 const avatarColor = (id: number) => AVATAR_PALETTE[id % AVATAR_PALETTE.length];
@@ -14,12 +15,15 @@ interface PreviewItem {
   mediaType: 'image' | 'video';
 }
 
+export type ListingType = 'sell' | 'buy';
+
 export interface ComposerSubmit {
   content: string;
   files: File[];
   locationId: number;
   category: string | null;
   isMarketplace: boolean;
+  listingType: ListingType | null;
   price: number | null;
 }
 
@@ -40,10 +44,25 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
   const [showCategories, setShowCategories] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [isMarketplace, setIsMarketplace] = useState(defaultMarketplace);
+  const [listingType, setListingType] = useState<ListingType>('sell');
   const [priceText, setPriceText] = useState('');
 
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setIsMarketplace(defaultMarketplace);
+    if (!defaultMarketplace) return;
+    // Switching into market tab — clear non-market category so chips aren't out of scope
+    setCategory((c) => {
+      const valid = MARKET_CATEGORIES.some((m) => m.id === c);
+      return valid ? c : null;
+    });
+  }, [defaultMarketplace]);
+
+  const activeCats = isMarketplace ? MARKET_CATEGORIES : CATEGORIES;
+  const selectedCat = activeCats.find((c) => c.id === category) ?? null;
+  const catLabelKey = isMarketplace ? 'mcat' : 'cat';
 
   const addFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const items: PreviewItem[] = Array.from(e.target.files ?? []).map((file) => ({
@@ -67,6 +86,19 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
     if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; }
   };
 
+  const toggleMarketplace = () => {
+    setIsMarketplace((v) => {
+      const next = !v;
+      // Reset category when switching domain so we don't carry an out-of-scope chip
+      setCategory((c) => {
+        const list = next ? MARKET_CATEGORIES : CATEGORIES;
+        return list.some((x) => x.id === c) ? c : null;
+      });
+      if (!next) setPriceText('');
+      return next;
+    });
+  };
+
   const handleSubmit = async () => {
     if (!content.trim() && !previews.length) return;
     let price: number | null = null;
@@ -82,6 +114,7 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
         locationId: location?.id ?? fallbackLocationId,
         category,
         isMarketplace,
+        listingType: isMarketplace ? listingType : null,
         price,
       });
       setContent('');
@@ -103,8 +136,6 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
     if (!digits) return '';
     return Number(digits).toLocaleString();
   };
-
-  const selectedCat = CATEGORIES.find((c) => c.id === category);
 
   return (
     <div className="composer">
@@ -146,16 +177,39 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
           onClear={() => setLocation(null)}
         />
 
+        {isMarketplace && (
+          <div className="composer__type-row" role="radiogroup" aria-label={t('market.type_choose')}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={listingType === 'sell'}
+              className={`composer__type-chip${listingType === 'sell' ? ' composer__type-chip--active composer__type-chip--sell' : ''}`}
+              onClick={() => setListingType('sell')}
+            >
+              🏷️ {t('market.type_sell')}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={listingType === 'buy'}
+              className={`composer__type-chip${listingType === 'buy' ? ' composer__type-chip--active composer__type-chip--buy' : ''}`}
+              onClick={() => setListingType('buy')}
+            >
+              🛒 {t('market.type_buy')}
+            </button>
+          </div>
+        )}
+
         {showCategories && (
           <div className="composer__cat-grid">
-            {CATEGORIES.map((c) => (
+            {activeCats.map((c) => (
               <button
                 key={c.id}
                 className={`composer__cat-chip${category === c.id ? ' composer__cat-chip--active' : ''}`}
                 onClick={() => setCategory(category === c.id ? null : c.id)}
               >
                 <span>{c.emoji}</span>
-                <span>{t(`cat.${c.id}`)}</span>
+                <span>{t(`${catLabelKey}.${c.id}`)}</span>
               </button>
             ))}
           </div>
@@ -195,7 +249,7 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
           </button>
           <button
             className={`composer__img-btn composer__sell-btn${isMarketplace ? ' composer__sell-btn--active' : ''}`}
-            onClick={() => setIsMarketplace((v) => !v)}
+            onClick={toggleMarketplace}
             title={t('market.sell_toggle')}
             type="button"
           >
@@ -204,14 +258,14 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
           <input ref={fileRef} type="file" accept="image/*,video/*" multiple hidden onChange={addFiles} />
           {selectedCat && (
             <span className="composer__cat-badge">
-              {selectedCat.emoji} {t(`cat.${selectedCat.id}`)}
+              {selectedCat.emoji} {t(`${catLabelKey}.${selectedCat.id}`)}
               <button onClick={() => setCategory(null)} aria-label={t('composer.clear_category')}>×</button>
             </span>
           )}
           {isMarketplace && (
-            <span className="composer__cat-badge composer__cat-badge--market">
-              🛍️ {t('market.sell_toggle')}
-              <button onClick={() => { setIsMarketplace(false); setPriceText(''); }} type="button">×</button>
+            <span className={`composer__cat-badge composer__cat-badge--market composer__cat-badge--${listingType}`}>
+              {listingType === 'sell' ? '🏷️' : '🛒'} {t(listingType === 'sell' ? 'market.type_sell_label' : 'market.type_buy_label')}
+              <button onClick={toggleMarketplace} type="button">×</button>
             </span>
           )}
           <button

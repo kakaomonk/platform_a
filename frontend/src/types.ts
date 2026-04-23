@@ -17,7 +17,9 @@ export interface Post {
   like_count: number;
   comment_count: number;
   is_liked: boolean;
+  is_bookmarked?: boolean;
   is_marketplace?: boolean;
+  listing_type?: 'sell' | 'buy' | null;
   price?: number | null;
   currency?: string | null;
   sold?: boolean;

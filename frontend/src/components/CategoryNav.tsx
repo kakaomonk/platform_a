@@ -12,16 +12,6 @@ export function CategoryNav({ selected, onSelect, marketplaceActive, onMarketpla
   const { t } = useTranslation();
   return (
     <nav className="cat-nav">
-      <button
-        className={`cat-nav__item cat-nav__item--market${marketplaceActive ? ' cat-nav__item--active' : ''}`}
-        onClick={() => onMarketplaceToggle?.()}
-      >
-        <span className="cat-nav__emoji">🛍️</span>
-        <span className="cat-nav__text">{t('cat.marketplace')}</span>
-      </button>
-
-      <div className="cat-nav__divider" aria-hidden="true" />
-
       <div className="cat-nav__label">{t('cat.label')}</div>
       <button
         className={`cat-nav__item${!marketplaceActive && selected === null ? ' cat-nav__item--active' : ''}`}
@@ -40,6 +30,16 @@ export function CategoryNav({ selected, onSelect, marketplaceActive, onMarketpla
           <span className="cat-nav__text">{t(`cat.${c.id}`)}</span>
         </button>
       ))}
+
+      <div className="cat-nav__divider" aria-hidden="true" />
+
+      <button
+        className={`cat-nav__item cat-nav__item--market${marketplaceActive ? ' cat-nav__item--active' : ''}`}
+        onClick={() => onMarketplaceToggle?.()}
+      >
+        <span className="cat-nav__emoji">🛍️</span>
+        <span className="cat-nav__text">{t('cat.marketplace')}</span>
+      </button>
     </nav>
   );
 }

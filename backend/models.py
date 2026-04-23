@@ -38,6 +38,7 @@ class Post(Base):
     location_coords = Column(String(50))
     category = Column(String(50), nullable=True)
     is_marketplace = Column(Boolean, default=False, nullable=False, server_default="false")
+    listing_type = Column(String(4), nullable=True)  # "sell" or "buy" (only for marketplace posts)
     price = Column(Integer, nullable=True)  # KRW, nullable even for marketplace (price-on-request)
     currency = Column(String(3), nullable=True, default="KRW")
     sold = Column(Boolean, default=False, nullable=False, server_default="false")
@@ -84,6 +85,19 @@ class Like(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("user_id", "post_id", name="uq_user_post_like"),)
+
+    user = relationship("User")
+    post = relationship("Post")
+
+
+class Bookmark(Base):
+    __tablename__ = "bookmarks"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("user_id", "post_id", name="uq_user_post_bookmark"),)
 
     user = relationship("User")
     post = relationship("Post")

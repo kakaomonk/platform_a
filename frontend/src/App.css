@@ -567,8 +567,46 @@ textarea:focus:not(:focus-visible) { outline: none; }
 }
 .action-btn:hover { color: var(--text); background: var(--surface-2); }
 .action-btn:active { transform: scale(0.9); }
+/* ── Pull to refresh ─────────────────────────────────────── */
+.ptr {
+  position: relative;
+  will-change: transform;
+}
+.ptr__indicator {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease);
+}
+.ptr__spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+  transition: transform 60ms linear;
+}
+.ptr__indicator--spinning .ptr__spinner {
+  animation: ptr-spin 0.9s linear infinite;
+}
+@keyframes ptr-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.ptr__label { white-space: nowrap; }
+
 .action-btn--liked { color: var(--danger) !important; animation: heart-pop var(--t-base) var(--ease); }
 .action-btn--liked:hover { color: var(--danger-hover) !important; background: var(--danger-bg); }
+.action-btn--bookmarked { color: var(--brand) !important; animation: heart-pop var(--t-base) var(--ease); }
+.action-btn--bookmarked:hover { color: var(--brand-hover) !important; background: var(--brand-soft); }
 .action-btn--danger:hover { color: var(--danger); background: var(--danger-bg); }
 @keyframes heart-pop {
   0%   { transform: scale(1); }
@@ -1496,7 +1534,7 @@ textarea:focus:not(:focus-visible) { outline: none; }
 .post-card__price-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 0 0 8px;
 }
 .post-card__price {
@@ -1505,7 +1543,28 @@ textarea:focus:not(:focus-visible) { outline: none; }
   color: var(--text);
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
+.post-card__type-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.post-card__type-tag--sell {
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  color: #047857;
+}
+.post-card__type-tag--buy {
+  background: color-mix(in srgb, #f97316 14%, transparent);
+  color: #c2410c;
+}
+:root.dark .post-card__type-tag--sell { color: #34d399; }
+:root.dark .post-card__type-tag--buy  { color: #fb923c; }
 .post-card__sold-tag {
   font-size: 10px;
   font-weight: 700;
@@ -1652,6 +1711,35 @@ textarea:focus:not(:focus-visible) { outline: none; }
   background: var(--brand-soft);
   border-color: transparent;
 }
+.composer__cat-badge--sell { color: #047857; background: color-mix(in srgb, #10b981 14%, transparent); }
+.composer__cat-badge--buy  { color: #c2410c; background: color-mix(in srgb, #f97316 14%, transparent); }
+:root.dark .composer__cat-badge--sell { color: #34d399; }
+:root.dark .composer__cat-badge--buy  { color: #fb923c; }
+
+.composer__type-row {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 2px;
+}
+.composer__type-chip {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+.composer__type-chip:hover { border-color: var(--border-focus); color: var(--text); }
+.composer__type-chip--active {
+  border-color: transparent;
+  color: #fff;
+}
+.composer__type-chip--sell { background: #10b981; }
+.composer__type-chip--buy  { background: #f97316; }
 
 /* ── Post Card Skeleton ──────────────────────────────────── */
 .post-card-skeleton {

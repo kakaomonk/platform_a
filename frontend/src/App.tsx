@@ -10,6 +10,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { CategoryNav } from './components/CategoryNav';
 import { DMModal } from './components/DMModal';
 import { NotificationsModal } from './components/NotificationsModal';
+import { PullToRefresh } from './components/PullToRefresh';
 import { API_BASE } from './config';
 import { useAuth } from './AuthContext';
 import type { Post } from './types';
@@ -326,15 +327,20 @@ export default function App() {
   };
 
   const handleCategorySelect = (cat: string | null) => {
+    // Lifestyle categories belong to the regular feed — selecting one exits marketplace mode
+    // so the user doesn't get stuck on an empty filtered marketplace view.
+    if (marketplaceMode) setMarketplaceMode(false);
     setCategoryFilter(cat);
-    // Re-fetch with new category — useEffect handles normal feed; manually handle special modes
     if (searchQuery) void handleSearch(searchQuery);
     else if (locationFilter) void fetchLocationPosts(locationFilter.id, cat);
-    // else: normal feed / marketplace useEffect will fire due to categoryFilter change
+    // else: normal feed useEffect will fire due to categoryFilter / marketplaceMode change
   };
 
   const handleMarketplaceToggle = () => {
+    // Marketplace uses a different category set (MARKET_CATEGORIES), so clear any lifestyle
+    // filter when entering/leaving marketplace.
     setMarketplaceMode((v) => !v);
+    setCategoryFilter(null);
     setSearchQuery('');
     setSearchPosts([]);
     setLocationFilter(null);
@@ -349,7 +355,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/upload/`, { method: 'POST', headers: authHeader(), body: form });
       media = (await res.json()).media;
     }
-    await fetch(`${API_BASE}/posts/`, {
+    const res = await fetch(`${API_BASE}/posts/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({
@@ -358,13 +364,30 @@ export default function App() {
         media,
         category: data.category,
         is_marketplace: data.isMarketplace,
+        listing_type: data.listingType,
         price: data.price,
         currency: 'KRW',
       }),
     });
-    // After posting a marketplace item, jump user to the marketplace tab
-    if (data.isMarketplace && !marketplaceMode) setMarketplaceMode(true);
-    refreshFeed();
+    if (!res.ok) {
+      console.error('[POST /posts] failed:', res.status, await res.text());
+      return;
+    }
+    // Route the viewer to the tab where their new post will be visible, then fetch explicitly
+    // (setMarketplaceMode is async, so refreshFeed() using the stale value would hit the wrong feed).
+    if (data.isMarketplace) {
+      if (!marketplaceMode) setMarketplaceMode(true);
+      setSearchQuery('');
+      setSearchPosts([]);
+      setLocationFilter(null);
+      void fetchMarketplace(coords.lat, coords.lng, categoryFilter);
+    } else {
+      if (marketplaceMode) setMarketplaceMode(false);
+      setSearchQuery('');
+      setSearchPosts([]);
+      setLocationFilter(null);
+      void fetchFeed(coords.lat, coords.lng, feedTab, categoryFilter);
+    }
   };
 
   const handleEdit = async (
@@ -446,6 +469,7 @@ export default function App() {
         />
 
         <main className="feed">
+        <PullToRefresh onRefresh={refreshFeed}>
           {!isSearchMode && !isLocationMode && !isMarketMode && user && (
             <div className="feed-tabs">
               <button
@@ -534,6 +558,7 @@ export default function App() {
               )}
             </>
           )}
+        </PullToRefresh>
         </main>
 
         <aside className="sidebar">

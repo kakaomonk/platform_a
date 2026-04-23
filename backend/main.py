@@ -21,7 +21,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload, joinedload, contains_eager
 
 from database import get_db
-from models import Post, PostMedia, Location, User, SearchHistory, Like, Comment, Follow, Conversation, DirectMessage, Notification  # noqa: F401
+from models import Post, PostMedia, Location, User, SearchHistory, Like, Bookmark, Comment, Follow, Conversation, DirectMessage, Notification  # noqa: F401
 from auth import hash_password, verify_password, create_token, get_optional_user, require_user
 from storage import save_file, delete_file
 
@@ -313,6 +313,7 @@ class PostCreate(BaseModel):
     media: List[MediaItemIn] = []
     category: Optional[str] = None
     is_marketplace: bool = False
+    listing_type: Optional[str] = None  # "sell" | "buy"
     price: Optional[int] = None
     currency: Optional[str] = "KRW"
 
@@ -321,6 +322,7 @@ class PostUpdate(BaseModel):
     content: Optional[str] = None
     location_id: Optional[int] = None
     category: Optional[str] = None
+    listing_type: Optional[str] = None
     price: Optional[int] = None
     sold: Optional[bool] = None
 
@@ -334,12 +336,19 @@ async def create_post(
     price = payload.price if payload.is_marketplace else None
     if price is not None and price < 0:
         raise HTTPException(status_code=422, detail="Price must be non-negative")
+    listing_type: Optional[str] = None
+    if payload.is_marketplace:
+        lt = (payload.listing_type or "sell").lower()
+        if lt not in ("sell", "buy"):
+            raise HTTPException(status_code=422, detail="listing_type must be 'sell' or 'buy'")
+        listing_type = lt
     post = Post(
         user_id=current_user.id,
         content=payload.content,
         location_id=payload.location_id,
         category=payload.category,
         is_marketplace=payload.is_marketplace,
+        listing_type=listing_type,
         price=price,
         currency=(payload.currency or "KRW") if payload.is_marketplace else None,
     )
@@ -382,6 +391,11 @@ async def update_post(
         post.price = payload.price
     if payload.sold is not None and post.is_marketplace:
         post.sold = payload.sold
+    if payload.listing_type is not None and post.is_marketplace:
+        lt = payload.listing_type.lower()
+        if lt not in ("sell", "buy"):
+            raise HTTPException(status_code=422, detail="listing_type must be 'sell' or 'buy'")
+        post.listing_type = lt
     await db.commit()
     await db.refresh(post)
 
@@ -396,6 +410,7 @@ async def update_post(
         "content": post.content,
         "location_name": loc_name,
         "category": post.category,
+        "listing_type": post.listing_type,
         "price": post.price,
         "sold": post.sold,
     }
@@ -449,6 +464,7 @@ async def search_posts(
     posts = result.scalars().unique().all()
 
     like_set = await _user_like_set(db, current_user, [p.id for p in posts])
+    bookmark_set = await _user_bookmark_set(db, current_user, [p.id for p in posts])
     like_counts = await _like_counts(db, [p.id for p in posts])
     comment_counts = await _comment_counts(db, [p.id for p in posts])
 
@@ -468,7 +484,9 @@ async def search_posts(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_bookmarked": p.id in bookmark_set,
             "is_marketplace": bool(p.is_marketplace),
+            "listing_type": p.listing_type,
             "price": p.price,
             "currency": p.currency,
             "sold": bool(p.sold),
@@ -530,6 +548,7 @@ async def text_search_posts(
     page = posts_sorted[offset:offset + limit]
 
     like_set = await _user_like_set(db, current_user, [p.id for p in page])
+    bookmark_set = await _user_bookmark_set(db, current_user, [p.id for p in page])
     like_counts = await _like_counts(db, [p.id for p in page])
     comment_counts = await _comment_counts(db, [p.id for p in page])
 
@@ -556,7 +575,9 @@ async def text_search_posts(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_bookmarked": p.id in bookmark_set,
             "is_marketplace": bool(p.is_marketplace),
+            "listing_type": p.listing_type,
             "price": p.price,
             "currency": p.currency,
             "sold": bool(p.sold),
@@ -671,6 +692,7 @@ async def proximity_feed(
     page = posts_sorted[offset:offset + limit]
 
     like_set = await _user_like_set(db, current_user, [p.id for p in page])
+    bookmark_set = await _user_bookmark_set(db, current_user, [p.id for p in page])
     like_counts = await _like_counts(db, [p.id for p in page])
     comment_counts = await _comment_counts(db, [p.id for p in page])
 
@@ -697,7 +719,9 @@ async def proximity_feed(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_bookmarked": p.id in bookmark_set,
             "is_marketplace": bool(p.is_marketplace),
+            "listing_type": p.listing_type,
             "price": p.price,
             "currency": p.currency,
             "sold": bool(p.sold),
@@ -713,6 +737,15 @@ async def _user_like_set(db: AsyncSession, user: Optional[User], post_ids: list[
         return set()
     result = await db.execute(
         select(Like.post_id).where(Like.user_id == user.id, Like.post_id.in_(post_ids))
+    )
+    return {row[0] for row in result.all()}
+
+
+async def _user_bookmark_set(db: AsyncSession, user: Optional[User], post_ids: list[int]) -> set[int]:
+    if not user or not post_ids:
+        return set()
+    result = await db.execute(
+        select(Bookmark.post_id).where(Bookmark.user_id == user.id, Bookmark.post_id.in_(post_ids))
     )
     return {row[0] for row in result.all()}
 
@@ -762,6 +795,42 @@ async def like_post(
     await db.commit()
     count = await db.execute(select(func.count(Like.id)).where(Like.post_id == post_id))
     return {"status": "liked", "like_count": count.scalar()}
+
+
+@app.post("/posts/{post_id}/bookmark", status_code=status.HTTP_201_CREATED)
+async def bookmark_post(
+    post_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    exists = await db.execute(select(Post.id).where(Post.id == post_id))
+    if not exists.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Post not found")
+    existing = await db.execute(
+        select(Bookmark).where(Bookmark.user_id == current_user.id, Bookmark.post_id == post_id)
+    )
+    if existing.scalar_one_or_none():
+        return {"status": "bookmarked"}
+    db.add(Bookmark(user_id=current_user.id, post_id=post_id))
+    await db.commit()
+    return {"status": "bookmarked"}
+
+
+@app.delete("/posts/{post_id}/bookmark")
+async def unbookmark_post(
+    post_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    result = await db.execute(
+        select(Bookmark).where(Bookmark.user_id == current_user.id, Bookmark.post_id == post_id)
+    )
+    bookmark = result.scalar_one_or_none()
+    if not bookmark:
+        return {"status": "unbookmarked"}
+    await db.delete(bookmark)
+    await db.commit()
+    return {"status": "unbookmarked"}
 
 
 @app.delete("/posts/{post_id}/like")
@@ -1037,6 +1106,7 @@ async def following_feed(
     posts = result.scalars().unique().all()
 
     like_set = await _user_like_set(db, current_user, [p.id for p in posts])
+    bookmark_set = await _user_bookmark_set(db, current_user, [p.id for p in posts])
     like_counts = await _like_counts(db, [p.id for p in posts])
     comment_counts = await _comment_counts(db, [p.id for p in posts])
 
@@ -1058,7 +1128,9 @@ async def following_feed(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_bookmarked": p.id in bookmark_set,
             "is_marketplace": bool(p.is_marketplace),
+            "listing_type": p.listing_type,
             "price": p.price,
             "currency": p.currency,
             "sold": bool(p.sold),
@@ -1349,6 +1421,7 @@ async def marketplace_feed(
     posts = result.scalars().unique().all()
 
     like_set = await _user_like_set(db, current_user, [p.id for p in posts])
+    bookmark_set = await _user_bookmark_set(db, current_user, [p.id for p in posts])
     like_counts = await _like_counts(db, [p.id for p in posts])
     comment_counts = await _comment_counts(db, [p.id for p in posts])
 
@@ -1376,7 +1449,9 @@ async def marketplace_feed(
             "like_count": like_counts.get(p.id, 0),
             "comment_count": comment_counts.get(p.id, 0),
             "is_liked": p.id in like_set,
+            "is_bookmarked": p.id in bookmark_set,
             "is_marketplace": True,
+            "listing_type": p.listing_type,
             "price": p.price,
             "currency": p.currency or "KRW",
             "sold": bool(p.sold),

@@ -309,7 +309,7 @@ class MediaItemIn(BaseModel):
 
 class PostCreate(BaseModel):
     content: str = ""
-    location_id: int
+    location_id: Optional[int] = None
     media: List[MediaItemIn] = []
     category: Optional[str] = None
     is_marketplace: bool = False

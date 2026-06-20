@@ -638,22 +638,10 @@ async def proximity_feed(
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     limit = min(limit, 50)
-    # ~5,000 km bounding box — shrinks the fetch set before Python distance sort
-    LAT_DELTA = 45.0
-    lng_delta = min(90.0, LAT_DELTA / max(math.cos(math.radians(lat)), 0.017))
     feed_q = (
         select(Post)
         .join(Post.location)
-        .where(
-            Post.is_marketplace.is_(False),
-            or_(
-                Location.latitude.is_(None),
-                and_(
-                    Location.latitude.between(lat - LAT_DELTA, lat + LAT_DELTA),
-                    Location.longitude.between(lng - lng_delta, lng + lng_delta),
-                ),
-            ),
-        )
+        .where(Post.is_marketplace.is_(False))
         .options(selectinload(Post.media), contains_eager(Post.location), joinedload(Post.user))
     )
     if category:

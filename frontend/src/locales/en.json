@@ -116,7 +116,7 @@
   "map.api_hint": "Set a Google Maps API key\nto display the map",
   "map.locating": "Locating…",
   "map.sorted_my": "Sorted by my location",
-  "map.sorted_default": "Sorted by default (Seoul)",
+  "map.sorted_default": "Sorted by default (Toronto)",
   "map.search_placeholder": "Search city to filter posts",
 
   "cat.label": "Category",

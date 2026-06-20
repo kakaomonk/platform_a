@@ -64,7 +64,7 @@ function NearbyCitiesBox({
   );
 }
 
-const DEFAULT_COORDS = { lat: 37.5665, lng: 126.978 };
+const DEFAULT_COORDS = { lat: 43.6532, lng: -79.3832 };
 
 function FeedSkeleton({ count = 6 }: { count?: number }) {
   return (
@@ -155,7 +155,7 @@ export default function App() {
       if (tab === 'following') {
         url = `${API_BASE}/feed/following${cat ? `?category=${cat}` : ''}`;
       } else {
-        url = `${API_BASE}/feed/?lat=${lat}&lng=${lng}${cat ? `&category=${cat}` : ''}`;
+        url = `${API_BASE}/feed/?lat=${lat}&lng=${lng}&limit=50${cat ? `&category=${cat}` : ''}`;
       }
       const res = await fetch(url, { headers });
       const data = await res.json();

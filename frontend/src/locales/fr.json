@@ -77,6 +77,7 @@
   "composer.clear_category": "Effacer la catégorie",
   "composer.posting": "Publication…",
   "composer.post": "Publier",
+  "composer.post_failed": "Échec de la publication. Veuillez réessayer.",
 
   "profile.loading": "Chargement…",
   "profile.not_found": "Utilisateur introuvable",

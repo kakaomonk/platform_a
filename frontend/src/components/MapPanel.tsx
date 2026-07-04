@@ -24,7 +24,14 @@ export function MapPanel({ userCoords, geoStatus, onSearchSelect, onLocationClea
       <div className="map-panel__map">
         {API_KEY ? (
           <APIProvider apiKey={API_KEY}>
-            <Map defaultCenter={userCoords} defaultZoom={12} mapId="DEMO_MAP_ID">
+            {/* key remounts the map when coords resolve — defaultCenter alone
+                is uncontrolled, so the map would stay on the initial default. */}
+            <Map
+              key={`${userCoords.lat},${userCoords.lng}`}
+              defaultCenter={userCoords}
+              defaultZoom={12}
+              mapId="DEMO_MAP_ID"
+            >
               <AdvancedMarker position={userCoords} />
             </Map>
           </APIProvider>

@@ -43,6 +43,7 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
   const [category, setCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
   const [isMarketplace, setIsMarketplace] = useState(defaultMarketplace);
   const [listingType, setListingType] = useState<ListingType>('sell');
   const [priceText, setPriceText] = useState('');
@@ -107,6 +108,7 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
       if (Number.isFinite(parsed) && parsed >= 0) price = parsed;
     }
     setSubmitting(true);
+    setSubmitError(false);
     try {
       await onSubmit({
         content,
@@ -126,6 +128,8 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
       previews.forEach((p) => URL.revokeObjectURL(p.previewUrl));
       setPreviews([]);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    } catch {
+      setSubmitError(true);
     } finally {
       setSubmitting(false);
     }
@@ -267,6 +271,9 @@ export function PostComposer({ fallbackLocationId, defaultMarketplace = false, o
               {listingType === 'sell' ? '🏷️' : '🛒'} {t(listingType === 'sell' ? 'market.type_sell_label' : 'market.type_buy_label')}
               <button onClick={toggleMarketplace} type="button">×</button>
             </span>
+          )}
+          {submitError && (
+            <span className="composer__error">{t('composer.post_failed')}</span>
           )}
           <button
             className="btn-primary"

@@ -103,6 +103,10 @@ export function Navbar({ onProfileClick, onSearch, onLocationSelect, onDMClick, 
   };
 
   const selectLocation = async (s: LocationSuggestion) => {
+    // Cancel any pending text-search debounce so it can't fire after
+    // selection and overwrite the location filter with a stale query.
+    if (textDebounce.current) clearTimeout(textDebounce.current);
+    if (locDebounce.current) clearTimeout(locDebounce.current);
     setShowDropdown(false);
     setQuery(s.name);
     onSearch?.('');

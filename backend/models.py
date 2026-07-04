@@ -57,7 +57,8 @@ class Post(Base):
 class PostMedia(Base):
     __tablename__ = "post_media"
     id = Column(Integer, primary_key=True, index=True)
-    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False) 
+    # ondelete cascade means that when the post is deleted, all the media will be deleted (to prevent orphan data))
     media_url = Column(String(500), nullable=False)
     media_type = Column(String(10), default="image")
     order = Column(Integer, default=0)

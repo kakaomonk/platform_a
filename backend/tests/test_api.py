@@ -157,6 +157,14 @@ async def test_like_and_unlike(client):
 
 
 @pytest.mark.asyncio
+async def test_like_nonexistent_post_404(client):
+    await register(client, "liker404")
+    token = await login(client, "liker404")
+    res = await client.post("/posts/999999/like", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_double_like_rejected(client):
     await register(client, "liker2")
     token = await login(client, "liker2")
@@ -209,6 +217,72 @@ async def test_empty_comment_rejected(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_comment_nonexistent_post_404(client):
+    await register(client, "commenter404")
+    token = await login(client, "commenter404")
+    res = await client.post(
+        "/posts/999999/comments",
+        json={"content": "hello"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 404
+
+
+# ── Upload ────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_upload_requires_auth(client):
+    res = await client.post("/upload/", files={"files": ("a.jpg", b"data", "image/jpeg")})
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_bad_extension(client):
+    await register(client, "uploader1")
+    token = await login(client, "uploader1")
+    res = await client.post(
+        "/upload/",
+        files={"files": ("evil.exe", b"data", "application/octet-stream")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 422
+
+
+# ── DM ────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_dm_returns_latest_messages(client):
+    await register(client, "dm_a")
+    await register(client, "dm_b")
+    token_a = await login(client, "dm_a")
+
+    res_b = await client.post("/auth/login", json={"username": "dm_b", "password": "pass1234"})
+    user_b_id = res_b.json()["user_id"]
+
+    res = await client.post(
+        "/dm/conversations/",
+        json={"target_user_id": user_b_id},
+        headers={"Authorization": f"Bearer {token_a}"},
+    )
+    conv_id = res.json()["id"]
+
+    for i in range(10):
+        await client.post(
+            f"/dm/conversations/{conv_id}/messages",
+            json={"content": f"msg {i}"},
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+
+    res = await client.get(
+        f"/dm/conversations/{conv_id}/messages?limit=5",
+        headers={"Authorization": f"Bearer {token_a}"},
+    )
+    assert res.status_code == 200
+    msgs = res.json()["messages"]
+    assert [m["content"] for m in msgs] == [f"msg {i}" for i in range(5, 10)]
 
 
 # ── Follow ────────────────────────────────────────────────────────────────────

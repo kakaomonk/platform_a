@@ -100,7 +100,7 @@ function EmptyState({ title, sub }: { title: string; sub?: string }) {
 
 export default function App() {
   const { t } = useTranslation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
 
   const [posts, setPosts] = useState<Post[]>([]);
@@ -248,7 +248,7 @@ export default function App() {
     if (!userCoords) return;
     fetch(`${API_BASE}/location/reverse-geocode/?lat=${userCoords.lat}&lng=${userCoords.lng}`)
       .then((r) => r.json())
-      .then((d) => setDefaultLocationId(d.location_id))
+      .then((d) => { if (typeof d?.location_id === 'number') setDefaultLocationId(d.location_id); })
       .catch(() => {});
   }, [userCoords]);
 
@@ -270,6 +270,9 @@ export default function App() {
     const poll = async () => {
       try {
         const res = await fetch(`${API_BASE}/dm/unread-count`, { headers: authHeader() });
+        // Expired/invalid token: log out instead of appearing signed-in
+        // while every authed request silently fails.
+        if (res.status === 401) { logout(); return; }
         const data = await res.json();
         setDmUnread(data.unread_count ?? 0);
       } catch { /* ignore */ }
@@ -285,6 +288,7 @@ export default function App() {
     const poll = async () => {
       try {
         const res = await fetch(`${API_BASE}/notifications/unread-count`, { headers: authHeader() });
+        if (res.status === 401) { logout(); return; }
         const data = await res.json();
         setNotifUnread(data.unread_count ?? 0);
       } catch { /* ignore */ }
@@ -353,7 +357,13 @@ export default function App() {
       const form = new FormData();
       data.files.forEach((f) => form.append('files', f));
       const res = await fetch(`${API_BASE}/upload/`, { method: 'POST', headers: authHeader(), body: form });
-      media = (await res.json()).media;
+      // Abort on upload failure — throwing keeps the composer draft intact
+      // instead of silently creating a post without its images.
+      if (!res.ok) {
+        console.error('[POST /upload] failed:', res.status, await res.text());
+        throw new Error('upload failed');
+      }
+      media = (await res.json()).media ?? [];
     }
     const res = await fetch(`${API_BASE}/posts/`, {
       method: 'POST',
@@ -371,7 +381,7 @@ export default function App() {
     });
     if (!res.ok) {
       console.error('[POST /posts] failed:', res.status, await res.text());
-      return;
+      throw new Error('post failed');
     }
     // Route the viewer to the tab where their new post will be visible, then fetch explicitly
     // (setMarketplaceMode is async, so refreshFeed() using the stale value would hit the wrong feed).
@@ -424,6 +434,23 @@ export default function App() {
         });
         if (searchQuery) setSearchPosts(confirm); else setPosts(confirm);
       }
+    } catch { refreshFeed(); }
+  };
+
+  const handleToggleSold = async (postId: number, sold: boolean) => {
+    // Optimistic update against whichever list is currently displayed,
+    // rolled back via refreshFeed() if the PATCH fails.
+    const update = (prev: Post[]) => prev.map((p) => p.id !== postId ? p : { ...p, sold });
+    if (marketplaceMode) setMarketPosts(update);
+    else if (searchQuery) setSearchPosts(update);
+    else setPosts(update);
+    try {
+      const res = await fetch(`${API_BASE}/posts/${postId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ sold }),
+      });
+      if (!res.ok) refreshFeed();
     } catch { refreshFeed(); }
   };
 
@@ -545,6 +572,7 @@ export default function App() {
                     currentUserId={user?.id ?? null}
                     onDelete={handleDelete}
                     onEdit={handleEdit}
+                    onToggleSold={handleToggleSold}
                     onProfileClick={(uid) => setProfileUserId(uid)}
                     onOffer={(uid, text) => openDM(uid, text)}
                   />

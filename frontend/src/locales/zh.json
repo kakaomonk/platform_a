@@ -77,6 +77,7 @@
   "composer.clear_category": "清除分类",
   "composer.posting": "发布中…",
   "composer.post": "发布",
+  "composer.post_failed": "发布失败，请重试。",
 
   "profile.loading": "加载中…",
   "profile.not_found": "找不到该用户",

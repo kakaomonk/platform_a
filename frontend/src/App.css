@@ -1574,8 +1574,26 @@ textarea:focus:not(:focus-visible) { outline: none; }
   padding: 2px 8px;
   border-radius: var(--r-pill);
 }
+.post-card__sold-toggle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.post-card__sold-toggle:hover { color: var(--text); border-color: var(--text-muted); }
 .post-card--sold .post-card__price { color: var(--text-muted); text-decoration: line-through; }
 .post-card--market { border-color: color-mix(in srgb, var(--brand) 20%, var(--border)); }
+
+.composer__error {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ef4444;
+}
 
 .post-card__offer {
   margin-top: 8px;

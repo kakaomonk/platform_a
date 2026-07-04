@@ -77,6 +77,7 @@
   "composer.clear_category": "카테고리 지우기",
   "composer.posting": "게시 중…",
   "composer.post": "게시하기",
+  "composer.post_failed": "게시에 실패했습니다. 다시 시도해주세요.",
 
   "profile.loading": "불러오는 중…",
   "profile.not_found": "사용자를 찾을 수 없습니다",

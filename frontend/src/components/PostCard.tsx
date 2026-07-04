@@ -40,6 +40,7 @@ interface Props {
   currentUserId: number | null;
   onDelete: (id: number) => void;
   onEdit: (id: number, changes: EditChanges) => Promise<void>;
+  onToggleSold?: (id: number, sold: boolean) => void;
   onProfileClick?: (userId: number) => void;
   onOffer?: (targetUserId: number, initialText: string) => void;
 }
@@ -53,7 +54,7 @@ function formatPrice(price: number | null | undefined, currency: string | null |
   return `${price.toLocaleString()} ${cur}`;
 }
 
-export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick, onOffer }: Props) {
+export function PostCard({ post, currentUserId, onDelete, onEdit, onToggleSold, onProfileClick, onOffer }: Props) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -181,7 +182,7 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
     try {
       const res = await fetch(`${API_BASE}/posts/${post.id}/comments`);
       const data = await res.json();
-      setComments(data.comments);
+      setComments(data.comments ?? []);
       setCommentsLoaded(true);
     } catch { /* ignore */ }
   };
@@ -278,6 +279,14 @@ export function PostCard({ post, currentUserId, onDelete, onEdit, onProfileClick
             </span>
             <span className="post-card__price">{priceLabel || t('market.price_label')}</span>
             {post.sold && <span className="post-card__sold-tag">{t('market.sold')}</span>}
+            {isOwner && onToggleSold && (
+              <button
+                className="post-card__sold-toggle"
+                onClick={() => onToggleSold(post.id, !post.sold)}
+              >
+                {post.sold ? t('market.unmark_sold') : t('market.mark_sold')}
+              </button>
+            )}
           </div>
         )}
 
@@ -530,7 +539,9 @@ function Carousel({ media, t }: { media: MediaItem[]; t: TFunction }) {
   const onTouchEnd = (e: React.TouchEvent) => {
     if (dragStart === null) return;
     const delta = dragStart - e.changedTouches[0].clientX;
-    if (Math.abs(delta) > 40) delta > 0 ? next() : prev();
+    if (Math.abs(delta) > 40) {
+      if (delta > 0) next(); else prev();
+    }
     setDragStart(null);
   };
 

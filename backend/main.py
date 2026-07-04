@@ -44,6 +44,10 @@ app.add_middleware(
 )
 
 VIDEO_EXTS = {".mp4", ".mov", ".webm", ".avi", ".mkv"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+# Whitelist for /upload/ — anything else (.exe, .html, .svg, …) is rejected
+# since uploads are served back as static files.
+ALLOWED_UPLOAD_EXTS = VIDEO_EXTS | IMAGE_EXTS
 
 MENTION_RE = re.compile(r"@([A-Za-z0-9_]{2,32})")
 
@@ -183,10 +187,15 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 @app.post("/upload/")
-async def upload_media(files: List[UploadFile] = File(...)):
+async def upload_media(
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(require_user),
+):
     result = []
     for file in files:
         ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_UPLOAD_EXTS:
+            raise HTTPException(status_code=422, detail=f"지원하지 않는 파일 형식입니다: {ext or '(없음)'}")
         safe_name = f"{uuid4().hex}{ext}"
         media_type = "video" if ext in VIDEO_EXTS else "image"
         url = save_file(file.file, safe_name, file.content_type or "application/octet-stream")
@@ -431,11 +440,10 @@ async def delete_post(
     if post.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Clean up uploaded files from disk
+    # Clean up via the storage abstraction so both backends work —
+    # a raw os.remove here would leave orphan objects when S3 is configured.
     for m in post.media:
-        local = m.media_url.replace(f"{BASE_URL}/", "")
-        if os.path.isfile(local):
-            os.remove(local)
+        delete_file(m.media_url)
 
     await db.delete(post)
     await db.commit()
@@ -737,6 +745,7 @@ async def _user_bookmark_set(db: AsyncSession, user: Optional[User], post_ids: l
     )
     return {row[0] for row in result.all()}
 
+### likes and comments counts
 
 async def _like_counts(db: AsyncSession, post_ids: list[int]) -> dict[int, int]:
     if not post_ids:
@@ -768,17 +777,19 @@ async def like_post(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
+    # Verify the post exists first — inserting a Like for a missing post
+    # would hit the FK constraint and surface as a 500 instead of a 404.
+    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
+    owner_id = post_res.scalar_one_or_none()
+    if owner_id is None:
+        raise HTTPException(status_code=404, detail="Post not found")
     existing = await db.execute(
         select(Like).where(Like.user_id == current_user.id, Like.post_id == post_id)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Already liked")
     db.add(Like(user_id=current_user.id, post_id=post_id))
-
-    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
-    owner_id = post_res.scalar_one_or_none()
-    if owner_id is not None:
-        _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="like", post_id=post_id)
+    _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="like", post_id=post_id)
 
     await db.commit()
     count = await db.execute(select(func.count(Like.id)).where(Like.post_id == post_id))
@@ -887,18 +898,18 @@ async def create_comment(
 ):
     if not payload.content.strip():
         raise HTTPException(status_code=422, detail="Comment cannot be empty")
+    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
+    owner_id = post_res.scalar_one_or_none()
+    if owner_id is None:
+        raise HTTPException(status_code=404, detail="Post not found")
     content = payload.content.strip()
     comment = Comment(user_id=current_user.id, post_id=post_id, content=content)
     db.add(comment)
     await db.flush()
 
-    post_res = await db.execute(select(Post.user_id).where(Post.id == post_id))
-    owner_id = post_res.scalar_one_or_none()
-    skip_ids = {current_user.id}
-    if owner_id is not None:
-        _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="comment",
-                          post_id=post_id, comment_id=comment.id)
-        skip_ids.add(owner_id)
+    skip_ids = {current_user.id, owner_id}
+    _add_notification(db, user_id=owner_id, actor_id=current_user.id, type="comment",
+                      post_id=post_id, comment_id=comment.id)
 
     await _notify_mentions(
         db, content, current_user.id, "mention_comment",
@@ -996,7 +1007,7 @@ async def upload_avatar(
     current_user: User = Depends(require_user),
 ):
     ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+    if ext not in IMAGE_EXTS:
         raise HTTPException(status_code=422, detail="이미지 파일만 업로드 가능합니다")
     safe_name = f"avatar_{current_user.id}_{uuid4().hex[:8]}{ext}"
     delete_file(current_user.avatar_url)
@@ -1295,10 +1306,12 @@ async def get_messages(
     q = select(DirectMessage).where(DirectMessage.conversation_id == conv_id)
     if before_id:
         q = q.where(DirectMessage.id < before_id)
-    q = q.order_by(DirectMessage.created_at.asc()).limit(limit)
+    # Take the NEWEST `limit` rows, then reverse to chronological order.
+    # Ordering asc+limit would return the oldest messages and hide recent ones.
+    q = q.order_by(DirectMessage.id.desc()).limit(limit)
 
     result = await db.execute(q)
-    msgs = result.scalars().all()
+    msgs = list(reversed(result.scalars().all()))
 
     for m in msgs:
         if m.sender_id != current_user.id and not m.is_read:

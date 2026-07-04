@@ -77,6 +77,7 @@
   "composer.clear_category": "Clear category",
   "composer.posting": "Posting…",
   "composer.post": "Post",
+  "composer.post_failed": "Failed to post. Please try again.",
 
   "profile.loading": "Loading…",
   "profile.not_found": "User not found",

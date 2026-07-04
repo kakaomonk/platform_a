@@ -1,4 +1,11 @@
 import asyncio
+import os
+
+# Must be set before importing main/auth: auth requires SECRET_KEY at import
+# time, and rate limits would trip on the shared test-client IP.
+os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("RATE_LIMIT_DISABLED", "1")
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport

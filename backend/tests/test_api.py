@@ -251,6 +251,41 @@ async def test_upload_rejects_bad_extension(client):
     assert res.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_upload_rejects_oversized_file(client):
+    import main as main_module
+
+    await register(client, "uploader2")
+    token = await login(client, "uploader2")
+    oversized = b"0" * (main_module.MAX_IMAGE_BYTES + 1)
+    res = await client.post(
+        "/upload/",
+        files={"files": ("big.jpg", oversized, "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limited(client):
+    from main import limiter
+
+    await register(client, "ratelimited1")
+    limiter.enabled = True
+    try:
+        statuses = []
+        for _ in range(11):  # login limit is 10/minute
+            res = await client.post(
+                "/auth/login",
+                json={"username": "ratelimited1", "password": "wrong-password"},
+            )
+            statuses.append(res.status_code)
+        assert statuses[-1] == 429
+        assert all(s == 401 for s in statuses[:10])
+    finally:
+        limiter.enabled = False
+
+
 # ── DM ────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

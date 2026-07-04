@@ -2,6 +2,7 @@ import asyncio
 import math
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -11,10 +12,13 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 import requests as http_requests
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import and_, func, or_, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -26,6 +30,15 @@ from auth import hash_password, verify_password, create_token, get_optional_user
 from storage import save_file, delete_file
 
 app = FastAPI()
+
+# Brute-force protection on auth + abuse protection on uploads.
+# Disabled in tests via RATE_LIMIT_DISABLED=1 (set in conftest.py).
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=os.getenv("RATE_LIMIT_DISABLED") != "1",
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:9000")
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")]
@@ -48,6 +61,21 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 # Whitelist for /upload/ — anything else (.exe, .html, .svg, …) is rejected
 # since uploads are served back as static files.
 ALLOWED_UPLOAD_EXTS = VIDEO_EXTS | IMAGE_EXTS
+
+# Per-file size caps (bytes). Whole-request limits belong to the reverse
+# proxy in production; these stop a single oversized file from eating disk/S3.
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_VIDEO_BYTES = 100 * 1024 * 1024
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
+
+
+def _upload_size(file: UploadFile) -> int:
+    """Size of an already-spooled upload without reading it into memory."""
+    f = file.file
+    f.seek(0, os.SEEK_END)
+    size = f.tell()
+    f.seek(0)
+    return size
 
 MENTION_RE = re.compile(r"@([A-Za-z0-9_]{2,32})")
 
@@ -147,7 +175,8 @@ class LoginIn(BaseModel):
 
 
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, payload: RegisterIn, db: AsyncSession = Depends(get_db)):
     username = payload.username.strip()
     email = payload.email.strip().lower()
 
@@ -174,7 +203,8 @@ async def register(payload: RegisterIn, db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/auth/login")
-async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginIn, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(User).where(func.lower(User.username) == payload.username.strip().lower())
     )
@@ -187,7 +217,9 @@ async def login(payload: LoginIn, db: AsyncSession = Depends(get_db)):
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 @app.post("/upload/")
+@limiter.limit("30/minute")
 async def upload_media(
+    request: Request,
     files: List[UploadFile] = File(...),
     current_user: User = Depends(require_user),
 ):
@@ -196,6 +228,12 @@ async def upload_media(
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in ALLOWED_UPLOAD_EXTS:
             raise HTTPException(status_code=422, detail=f"지원하지 않는 파일 형식입니다: {ext or '(없음)'}")
+        max_bytes = MAX_VIDEO_BYTES if ext in VIDEO_EXTS else MAX_IMAGE_BYTES
+        if _upload_size(file) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"파일이 너무 큽니다 (최대 {max_bytes // (1024 * 1024)}MB): {file.filename}",
+            )
         safe_name = f"{uuid4().hex}{ext}"
         media_type = "video" if ext in VIDEO_EXTS else "image"
         url = save_file(file.file, safe_name, file.content_type or "application/octet-stream")
@@ -242,12 +280,59 @@ def _extract_nominatim_city(data: dict) -> str:
     )
 
 
+# Nominatim's usage policy allows at most 1 request/second; without a cache
+# and a global throttle, moderate traffic gets the server IP banned and kills
+# geocoding entirely. City-level results are effectively static → 24h TTL.
+_GEO_TTL_SECONDS = 24 * 3600
+_GEO_CACHE_MAX = 2000
+_geo_cache: dict = {}
+_nominatim_lock = asyncio.Lock()
+_nominatim_last_call = 0.0
+
+
+def _geo_cache_get(key: str):
+    entry = _geo_cache.get(key)
+    if not entry:
+        return None
+    expires_at, value = entry
+    if time.monotonic() > expires_at:
+        _geo_cache.pop(key, None)
+        return None
+    return value
+
+
+def _geo_cache_set(key: str, value) -> None:
+    if len(_geo_cache) >= _GEO_CACHE_MAX:
+        # Dicts preserve insertion order — evict the oldest half.
+        for k in list(_geo_cache)[: _GEO_CACHE_MAX // 2]:
+            _geo_cache.pop(k, None)
+    _geo_cache[key] = (time.monotonic() + _GEO_TTL_SECONDS, value)
+
+
+async def _nominatim_call(func, *args):
+    """Serialize Nominatim calls and space them >= 1s apart (usage policy)."""
+    global _nominatim_last_call
+    async with _nominatim_lock:
+        wait = 1.0 - (time.monotonic() - _nominatim_last_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            return await asyncio.to_thread(func, *args)
+        finally:
+            _nominatim_last_call = time.monotonic()
+
+
 @app.get("/location/search/")
 async def search_location(q: str):
-    if len(q.strip()) < 2:
+    q = q.strip()
+    if len(q) < 2:
         return {"results": []}
+    cache_key = f"search:{q.lower()}"
+    cached = _geo_cache_get(cache_key)
+    if cached is not None:
+        return {"results": cached}
     try:
-        items = await asyncio.to_thread(_nominatim_search_cities, q)
+        items = await _nominatim_call(_nominatim_search_cities, q)
         seen, results = set(), []
         for item in items:
             addr = item.get("address", {})
@@ -269,18 +354,25 @@ async def search_location(q: str):
                 "lat": float(item["lat"]),
                 "lng": float(item["lon"]),
             })
-        return {"results": results[:5]}
+        results = results[:5]
+        _geo_cache_set(cache_key, results)
+        return {"results": results}
     except Exception:
         return {"results": []}
 
 
 @app.get("/location/reverse-geocode/")
 async def reverse_geocode(lat: float, lng: float, db: AsyncSession = Depends(get_db)):
-    try:
-        data = await asyncio.to_thread(_nominatim_reverse, lat, lng)
-        name = _extract_nominatim_city(data)
-    except Exception:
-        name = f"{lat:.4f}, {lng:.4f}"
+    # Round to ~100m so nearby fixes share a cache entry (city-level answer).
+    cache_key = f"reverse:{lat:.3f},{lng:.3f}"
+    name = _geo_cache_get(cache_key)
+    if name is None:
+        try:
+            data = await _nominatim_call(_nominatim_reverse, lat, lng)
+            name = _extract_nominatim_city(data)
+            _geo_cache_set(cache_key, name)
+        except Exception:
+            name = f"{lat:.4f}, {lng:.4f}"  # fallback — don't cache failures
     return await _find_or_create_loc(name, lat, lng, db)
 
 
@@ -1009,6 +1101,11 @@ async def upload_avatar(
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in IMAGE_EXTS:
         raise HTTPException(status_code=422, detail="이미지 파일만 업로드 가능합니다")
+    if _upload_size(file) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"파일이 너무 큽니다 (최대 {MAX_AVATAR_BYTES // (1024 * 1024)}MB)",
+        )
     safe_name = f"avatar_{current_user.id}_{uuid4().hex[:8]}{ext}"
     delete_file(current_user.avatar_url)
     url = save_file(file.file, safe_name, file.content_type or "image/jpeg")
